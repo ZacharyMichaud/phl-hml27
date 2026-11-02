@@ -2,6 +2,8 @@
 """Build a self-contained index.html from HLM27_GM_Report_Cards.xlsx.
 
 Usage: python3 build_report_cards.py HLM27_GM_Report_Cards.xlsx [index.html]
+Writes index.html (a small loader that never changes) and report.html (the page)
+next to it; commit report.html after each update.
 
 Reads the "Entries and Exits" sheet (one row per team per trade), the grade
 cutoffs and sample-size limits on the "Method" sheet, and the team names from
@@ -467,6 +469,37 @@ TEMPLATE = r"""<!doctype html>
 """
 
 html = TEMPLATE.replace("__DATA__", payload)
-with open(out, "w", encoding="utf-8") as f:
+
+# GitHub Pages lets browsers cache a page for 10 minutes. So index.html is a tiny
+# loader that never changes; it fetches report.html with a fresh query string on
+# every visit, which skips both the browser and CDN caches. Commit report.html and
+# the site shows it as soon as the Pages deploy finishes.
+import os
+report = os.path.join(os.path.dirname(os.path.abspath(out)), "report.html")
+with open(report, "w", encoding="utf-8") as f:
     f.write(html)
-print(f"wrote {out}: {len(ledger)} ledger rows, {len({r['trade'] for r in ledger})} trades, {len(teams)} teams, through {data['asOf']}")
+LOADER = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>HLM27 GM report cards</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; background: #f2f6f9; color: #5b6b82; }
+  @media (prefers-color-scheme: dark) { body { background: #0e1726; color: #9fb0c6; } }
+  p { margin: 40px 16px; text-align: center; }
+</style>
+<script>
+  fetch('report.html?v=' + Date.now(), {cache: 'no-store'})
+    .then(function (r) { if (!r.ok) throw new Error(r.status); return r.text(); })
+    .then(function (html) { document.open(); document.write(html); document.close(); })
+    .catch(function () { location.replace('report.html' + location.hash); });
+</script>
+</head>
+<body><p>Loading the report cards…</p><noscript><p><a href="report.html">Open the report cards</a></p></noscript></body>
+</html>
+"""
+with open(out, "w", encoding="utf-8") as f:
+    f.write(LOADER)
+print(f"wrote {out} (loader) and report.html: {len(ledger)} ledger rows, {len({r['trade'] for r in ledger})} trades, {len(teams)} teams, through {data['asOf']}")
