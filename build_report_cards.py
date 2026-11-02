@@ -53,7 +53,7 @@ for ws in wb.worksheets:
 # KEEP_SEPARATE lists groups to leave split anyway (by any one of their trade ids);
 # EXTRA_MERGES lists other groups to combine, as tuples of trade ids.
 ASSET_CAP = 5
-KEEP_SEPARATE = {"3837", "3972", "4041"}  # Pulock (MTL-NYI), Nylander (OTT-TOR), Kuznetsov (CGY-NJD): separate deals
+KEEP_SEPARATE = {"3837", "3972", "4041", "D#4"}  # Pulock (MTL-NYI), Nylander (OTT-TOR), Kuznetsov (CGY-NJD), CAR-SEA D#4/D#7: separate deals
 EXTRA_MERGES = []
 
 from collections import defaultdict
