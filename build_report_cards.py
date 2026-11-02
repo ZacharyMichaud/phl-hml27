@@ -45,6 +45,15 @@ for ws in wb.worksheets:
     if m and ws.title == m.group(2):
         teams.append({"team": m.group(2), "name": m.group(1), "gm": ""})
 
+# A trade counts as Even when its balance, net value / total value moved, is
+# within this band either way: close enough that both sides' AI GMs would take it.
+EVEN_BAND = 0.10
+for d in ledger:
+    vin, vout = d["value_in"], d["value_out"]
+    moved = abs(vin) + abs(vout)
+    bal = (vin - vout) / moved if moved else 0.0
+    d["result"] = "Even" if abs(bal) < EVEN_BAND else ("Win" if vin > vout else "Loss")
+
 # GM names: fill this in once and they show on the cards.
 GM_NAMES = {}
 for t in teams:
@@ -52,7 +61,7 @@ for t in teams:
 
 data = {
     "ledger": ledger, "cutoffs": cutoffs, "teams": teams,
-    "minTrades": min_trades, "fullTrades": full_trades,
+    "minTrades": min_trades, "fullTrades": full_trades, "evenBand": EVEN_BAND,
     "asOf": max(r["date"] for r in ledger),
     "built": datetime.date.today().isoformat(),
 }
@@ -151,6 +160,7 @@ TEMPLATE = r"""<!doctype html>
           <th class="num sortable" data-sort="trades">Trades</th>
           <th class="num sortable" data-sort="wins">W</th>
           <th class="num sortable" data-sort="losses">L</th>
+          <th class="num sortable" data-sort="evens">E</th>
           <th class="num sec sortable" data-sort="win_pct">Win %</th>
           <th class="num sec">Players in</th><th class="num sec">Players out</th><th class="num sec">Picks in</th><th class="num sec">Picks out</th>
           <th class="num sec sortable" data-sort="value_in">Value in</th>
@@ -184,6 +194,7 @@ TEMPLATE = r"""<!doctype html>
       <div><div class="l">Trades</div><div class="v" id="t-trades"></div></div>
       <div><div class="l">Wins</div><div class="v" id="t-wins"></div></div>
       <div><div class="l">Losses</div><div class="v" id="t-losses"></div></div>
+      <div><div class="l">Even</div><div class="v" id="t-evens"></div></div>
       <div><div class="l">Value in</div><div class="v" id="t-vin"></div></div>
       <div><div class="l">Value out</div><div class="v" id="t-vout"></div></div>
       <div><div class="l">Net value</div><div class="v" id="t-net"></div></div>
@@ -203,7 +214,7 @@ TEMPLATE = r"""<!doctype html>
   <section id="method" class="method">
     <div class="head"><h2>How the grades work</h2></div>
     <p><b>Source.</b> The league save's trade history (every GM-to-GM trade since the season opened), plus trades posted in Discord after the latest save, numbered D#n. AI trades in the game's other leagues are left out.</p>
-    <p><b>Value.</b> The game's own trade valuation of each side at the time of the deal, as the save records it. Value in is what a team received; value out is what it sent. For Discord-posted trades the save has no recorded value, so picks use the save's pick values and players use the save's player values plus 5%, which is how the game's recorded values ran across recent trades.</p>
+    <p><b>Value.</b> The game's own trade valuation of each side at the time of the deal, as the save records it. Value in is what a team received; value out is what it sent. A trade is a Win or a Loss for a team only when the gap is more than <b id="m-band"></b> of the value moved; inside that band it is Even, a deal both sides' AI GMs would accept. Even trades count as neither a win nor a loss, but their value still counts toward Edge. For Discord-posted trades the save has no recorded value, so picks use the save's pick values and players use the save's player values plus 5%, which is how the game's recorded values ran across recent trades.</p>
     <p><b>Edge.</b> (value in − value out) ÷ (value in + value out): value won as a share of value moved, so a busy GM and a quiet one compare fairly. The grade comes from Edge using the cutoffs below. A team needs at least <b id="m-min"></b> trades for a grade (fewer shows INC) and <b id="m-full"></b> for a full grade; in between, the grade carries an asterisk.</p>
     <p><b>What it measures.</b> Asset value, not whether a trade helped a team win. Cap dumps, rentals and win-now veterans for young talent count as value lost. Where a team took picks to retain salary, that shows as value won, since the game does not price the cap cost. Three-team trades are split per asset by estimate. Players are shown with their overall and age as of the latest save, not at trade time.</p>
     <table class="cut"><thead><tr><th class="num">Minimum Edge</th><th>Grade</th></tr></thead><tbody id="cut-body"></tbody></table>
@@ -241,12 +252,12 @@ TEMPLATE = r"""<!doctype html>
     return best;
   };
   const by = {};
-  const blank = (code, name, gm) => ({team: code, name, gm, trades: 0, wins: 0, losses: 0, players_in: 0, players_out: 0, picks_in: 0, picks_out: 0, value_in: 0, value_out: 0, best: null, worst: null, top_in: null, top_out: null});
+  const blank = (code, name, gm) => ({team: code, name, gm, trades: 0, wins: 0, losses: 0, evens: 0, players_in: 0, players_out: 0, picks_in: 0, picks_out: 0, value_in: 0, value_out: 0, best: null, worst: null, top_in: null, top_out: null});
   for (const t of D.teams) by[t.team] = blank(t.team, t.name, t.gm || '');
   for (const r of D.ledger) {
     const t = by[r.team] || (by[r.team] = blank(r.team, r.team, ''));
     const vin = +r.value_in, vout = +r.value_out, net = vin - vout;
-    t.trades++; if (net > 0) t.wins++; if (net < 0) t.losses++;
+    t.trades++; if (r.result === 'Win') t.wins++; else if (r.result === 'Loss') t.losses++; else t.evens++;
     t.players_in += +r.players_in; t.players_out += +r.players_out; t.picks_in += +r.picks_in; t.picks_out += +r.picks_out;
     t.value_in += vin; t.value_out += vout;
     const tag = r.date + ' vs ' + r.partner + ': got ' + head(r.entries) + ', sent ' + head(r.exits);
@@ -273,7 +284,7 @@ TEMPLATE = r"""<!doctype html>
   const ids = new Set(D.ledger.map((r) => r.trade)), dates = D.ledger.map((r) => r.date).sort();
   $('n-trades').textContent = fmtInt(ids.size); $('d-first').textContent = fmtDate(dates[0]); $('d-last').textContent = fmtDate(dates[dates.length - 1]);
   $('as-of').textContent = fmtDate(D.asOf); $('built').textContent = fmtDate(D.built);
-  $('m-min').textContent = MIN; $('m-full').textContent = FULL;
+  $('m-min').textContent = MIN; $('m-band').textContent = Math.round(D.evenBand * 100) + '%'; $('m-full').textContent = FULL;
   const csvCell = (v) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
   const cols = ['date', 'trade', 'team', 'partner', 'entries', 'exits', 'players_in', 'players_out', 'picks_in', 'picks_out', 'value_in', 'value_out', 'net', 'result', 'note'];
   $('dl').href = URL.createObjectURL(new Blob(['\ufeff' + [cols.join(','), ...D.ledger.map((r) => cols.map((c) => csvCell(r[c])).join(','))].join('\r\n')], {type: 'text/csv'}));
@@ -312,7 +323,7 @@ TEMPLATE = r"""<!doctype html>
       cell(tr, r.rank == null ? '' : r.rank, 'num');
       cell(tr, r.team + (r.gm ? ' (' + r.gm + ')' : ''));
       const g = cell(tr, ''); const s = document.createElement('span'); s.className = gradeClass(r.grade); s.textContent = r.grade; g.appendChild(s);
-      cell(tr, r.trades, 'num'); cell(tr, r.wins, 'num'); cell(tr, r.losses, 'num');
+      cell(tr, r.trades, 'num'); cell(tr, r.wins, 'num'); cell(tr, r.losses, 'num'); cell(tr, r.evens, 'num');
       cell(tr, r.win_pct == null ? '' : fmtPct(r.win_pct), 'num sec');
       cell(tr, r.players_in, 'num sec'); cell(tr, r.players_out, 'num sec'); cell(tr, r.picks_in, 'num sec'); cell(tr, r.picks_out, 'num sec');
       cell(tr, fmtInt(r.value_in), 'num sec'); cell(tr, fmtInt(r.value_out), 'num sec');
@@ -350,7 +361,7 @@ TEMPLATE = r"""<!doctype html>
       const bar = el('rect', {x: Math.min(x(0), x(r.edge)), y: y(i) + 3, width: Math.max(1, Math.abs(x(r.edge) - x(0))), height: rowH - 6, rx: 2, fill: r.edge >= 0 ? 'var(--blue)' : 'var(--red)', opacity: me ? 1 : 0.55, style: 'cursor:pointer'});
       bar.addEventListener('pointermove', (e) => {
         t1.textContent = r.name + ' (' + r.team + ')' + (r.gm ? ', ' + r.gm : '') + ' · grade ' + r.grade;
-        t2.textContent = r.wins + '-' + r.losses + ' in ' + r.trades + ' trades, net ' + fmtNet(r.net) + ', edge ' + fmtEdge(r.edge);
+        t2.textContent = r.wins + '-' + r.losses + '-' + r.evens + ' (W-L-E) in ' + r.trades + ' trades, net ' + fmtNet(r.net) + ', edge ' + fmtEdge(r.edge);
         tip.hidden = false; const b = box.getBoundingClientRect();
         tip.style.left = Math.max(0, Math.min(e.clientX - b.left + 12, box.clientWidth - tip.offsetWidth)) + 'px';
         tip.style.top = (e.clientY - b.top - tip.offsetHeight - 10) + 'px';
@@ -372,7 +383,7 @@ TEMPLATE = r"""<!doctype html>
     $('t-name').textContent = r.name + ' (' + r.team + ')';
     $('t-gm').textContent = r.gm ? 'GM: ' + r.gm : '';
     $('t-rank').textContent = r.rank == null ? '—' : r.rank + ' of ' + graded.length;
-    $('t-trades').textContent = r.trades; $('t-wins').textContent = r.wins; $('t-losses').textContent = r.losses;
+    $('t-trades').textContent = r.trades; $('t-wins').textContent = r.wins; $('t-losses').textContent = r.losses; $('t-evens').textContent = r.evens;
     $('t-vin').textContent = fmtInt(r.value_in); $('t-vout').textContent = fmtInt(r.value_out);
     const net = $('t-net'); net.textContent = r.trades ? fmtNet(r.net) : '—'; net.className = 'v ' + (r.net > 0 ? 'win' : r.net < 0 ? 'loss' : '');
     $('t-edge').textContent = r.edge == null ? '—' : fmtEdge(r.edge);
