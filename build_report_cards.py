@@ -45,6 +45,55 @@ for ws in wb.worksheets:
     if m and ws.title == m.group(2):
         teams.append({"team": m.group(2), "name": m.group(1), "gm": ""})
 
+# The game caps a trade at 5 assets per side, so a bigger deal gets entered as
+# several trades on the same day between the same two teams. Those are combined
+# into one: any same-day group between the same teams where one part hits the cap.
+# KEEP_SEPARATE lists groups to leave split anyway (by any one of their trade ids);
+# EXTRA_MERGES lists other groups to combine, as tuples of trade ids.
+ASSET_CAP = 5
+KEEP_SEPARATE = {"3837", "3972", "4041"}  # Pulock (MTL-NYI), Nylander (OTT-TOR), Kuznetsov (CGY-NJD): separate deals
+EXTRA_MERGES = []
+
+from collections import defaultdict
+by_trade = defaultdict(list)
+for d in ledger:
+    by_trade[d["trade"]].append(d)
+groups = defaultdict(list)
+for tid, rs in by_trade.items():
+    groups[(rs[0]["date"], frozenset(x["team"] for x in rs))].append(tid)
+merge_sets = []
+for tids in groups.values():
+    if len(tids) < 2 or any(t in KEEP_SEPARATE for t in tids):
+        continue
+    if any(d["players_in"] + d["picks_in"] >= ASSET_CAP for t in tids for d in by_trade[t]):
+        merge_sets.append(tids)
+merge_sets += [list(m) for m in EXTRA_MERGES]
+
+def _num(t):
+    return (0, int(t)) if t.isdigit() else (1, int(t.lstrip("D#")))
+
+merged_ids = set()
+combined = []
+for tids in merge_sets:
+    tids = sorted(tids, key=_num)
+    merged_ids.update(tids)
+    new_id = "+".join(tids)
+    for team in sorted({d["team"] for t in tids for d in by_trade[t]}):
+        parts = [d for t in tids for d in by_trade[t] if d["team"] == team]
+        join = lambda k: "; ".join(p[k] for p in parts if p[k] and p[k] != "—") or "—"
+        notes = [p["note"] for p in parts if p["note"]]
+        row = {
+            "date": parts[0]["date"], "trade": new_id, "team": team, "partner": parts[0]["partner"],
+            "entries": join("entries"), "exits": join("exits"),
+            **{k: sum(p[k] for p in parts) for k in ("players_in", "players_out", "picks_in", "picks_out", "value_in", "value_out")},
+            "note": "; ".join([f"Combined from {len(tids)} trades entered the same day (the game allows {ASSET_CAP} assets per side)"] + notes),
+        }
+        row["net"] = row["value_in"] - row["value_out"]
+        combined.append(row)
+ledger = [d for d in ledger if d["trade"] not in merged_ids] + combined
+ledger.sort(key=lambda d: (d["date"], _num(d["trade"].split("+")[0]), d["team"]))
+print("combined", len(merge_sets), "split deals:", ", ".join("+".join(sorted(m, key=_num)) for m in merge_sets))
+
 # A trade counts as Even when its balance, net value / total value moved, is
 # within this band either way: close enough that both sides' AI GMs would take it.
 EVEN_BAND = 0.10
@@ -216,6 +265,7 @@ TEMPLATE = r"""<!doctype html>
     <p><b>Source.</b> The league save's trade history (every GM-to-GM trade since the season opened), plus trades posted in Discord after the latest save, numbered D#n. AI trades in the game's other leagues are left out.</p>
     <p><b>Value.</b> The game's own trade valuation of each side at the time of the deal, as the save records it. Value in is what a team received; value out is what it sent. A trade is a Win or a Loss for a team only when the gap is more than <b id="m-band"></b> of the value moved; inside that band it is Even, a deal both sides' AI GMs would accept. Even trades count as neither a win nor a loss, but their value still counts toward Edge. For Discord-posted trades the save has no recorded value, so picks use the save's pick values and players use the save's player values plus 5%, which is how the game's recorded values ran across recent trades.</p>
     <p><b>Edge.</b> (value in − value out) ÷ (value in + value out): value won as a share of value moved, so a busy GM and a quiet one compare fairly. The grade comes from Edge using the cutoffs below. A team needs at least <b id="m-min"></b> trades for a grade (fewer shows INC) and <b id="m-full"></b> for a full grade; in between, the grade carries an asterisk.</p>
+    <p><b>Combined trades.</b> The game allows at most 5 assets per side in one trade, so bigger deals get entered as several trades on the same day between the same two teams. Those are combined into one deal here and graded as a whole; their trade number joins the parts, like 3844+3845+3846.</p>
     <p><b>What it measures.</b> Asset value, not whether a trade helped a team win. Cap dumps, rentals and win-now veterans for young talent count as value lost. Where a team took picks to retain salary, that shows as value won, since the game does not price the cap cost. Three-team trades are split per asset by estimate. Players are shown with their overall and age as of the latest save, not at trade time.</p>
     <table class="cut"><thead><tr><th class="num">Minimum Edge</th><th>Grade</th></tr></thead><tbody id="cut-body"></tbody></table>
   </section>
