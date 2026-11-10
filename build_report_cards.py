@@ -52,8 +52,14 @@ min_trades, full_trades = MIN_TRADES, FULL_TRADES
 ASSET_CAP = 5
 # Pulock (MTL-NYI), Nylander (OTT-TOR), Kuznetsov (CGY-NJD, July 1 2027), Meyers (CAR-SEA, July 1 2027): separate deals
 KEEP_SEPARATE = {"3837", "3972", "4049", "4042"}
-# Calgary's Oct 6, 2027 deals, each entered as several trades with a 7th-round pick passed back and forth (confirmed by Zachary).
-EXTRA_MERGES = [("4098", "4099"), ("4100", "4101", "4102", "4103")]
+EXTRA_MERGES = []
+# Moves the league enters in the game as trades but that are not trades, so they are left out (confirmed by
+# Zachary): waiver claims, entered as the player plus the waiving team's 7th for the claiming team's 7th, then
+# the two 7ths swapped back (Sept 18 and Oct 6, 2027); and offer sheets, entered as the player for nothing
+# (MTL to MIN, July 9, 2027).
+WAIVER_CLAIMS = {"4075", "4076", "4077", "4078", "4079", "4080", "4081", "4082", "4083", "4084", "4085", "4086",
+                 "4096", "4097", "4098", "4099", "4100", "4101", "4102", "4103", "4104", "4105", "4106", "4107"}
+OFFER_SHEETS = {"4069", "4070", "4071"}
 # A trade counts as Even when its balance, net value / total value moved, is
 # within this band either way: close enough that both sides' AI GMs would take it.
 EVEN_BAND = 0.10
@@ -172,6 +178,29 @@ for s in states:
     for t in s["trades"]:
         if all(p["TeamId"] in code for p in t["Participants"]):
             history[str(t["Id"])] = t
+not_trades = sorted((WAIVER_CLAIMS | OFFER_SHEETS) & history.keys(), key=_num)
+for tid_ in not_trades:
+    del history[tid_]
+print(f"left out {len(not_trades)} entries that are waiver claims or offer sheets, not trades", flush=True)
+
+# Any other move entered that way gets flagged, to ask Zachary which it was: a pick that goes out and comes
+# back between the same teams on one day, or a side that sends nothing. Checked and kept as trades: Gustavsson
+# (LAK to NYI, July 2, 2027), and the OTT-VAN and FLA-PIT legs that look like corrections (see CLAUDE.md).
+CHECKED_TRADES = {"4062", "4063", "3843", "3847", "3848", "4011", "4012", "4013"}
+pairs_ = defaultdict(list)
+for tid_, t_ in history.items():
+    if tid_ not in CHECKED_TRADES:
+        pairs_[(t_["Date"][:10], tuple(sorted(p["TeamId"] for p in t_["Participants"])))].append(tid_)
+for (day_, teams_), tids_ in sorted(pairs_.items()):
+    senders_, empty_ = defaultdict(set), False
+    for tid_ in tids_:
+        for p_ in history[tid_]["Participants"]:
+            for k in p_.get("PicksId") or []:
+                senders_[(str(k["Year"]), str(k["Round"]), str(k["OriginalTeam"]))].add(p_["TeamId"])
+            empty_ |= not (p_.get("PlayersId") or p_.get("PicksId") or p_.get("Contracts"))
+    if empty_ or any(len(s) > 1 for s in senders_.values()):
+        print(f"CHECK: {day_} {'-'.join(code[t] for t in teams_)} ({'+'.join(sorted(tids_, key=_num))}) is entered like a waiver "
+              "claim or an offer sheet; ask Zachary which it was, then add it to WAIVER_CLAIMS, OFFER_SHEETS or CHECKED_TRADES", flush=True)
 
 
 # Salary retained by the sender is not in the trade history; it shows up as dead cap on the sending
@@ -818,7 +847,7 @@ TEMPLATE = r"""<!doctype html>
 
   <section id="method" class="method">
     <div class="head"><h2>How the grades work</h2></div>
-    <p><b>Source.</b> The official league saves' trade histories: every GM-to-GM trade since the league opened in September 2026. AI trades in the game's other leagues are left out. A season runs from July 1 to June 30, the league year; pick one at the top of the page to grade it alone.</p>
+    <p><b>Source.</b> The official league saves' trade histories: every GM-to-GM trade since the league opened in September 2026. AI trades in the game's other leagues are left out, and so are waiver claims and offer sheets, which the league enters in the game as trades. A season runs from July 1 to June 30, the league year; pick one at the top of the page to grade it alone.</p>
     <p><b>Value.</b> The game's own trade valuation of each side at the time of the deal, as the save records it. Value in is what a team received; value out is what it sent. A trade is a Win or a Loss for a team only when the gap is more than <b id="m-band"></b> of the value moved; inside that band it is Even, a deal both sides' AI GMs would accept. Even trades count as neither a win nor a loss, but their value still counts toward Edge.</p>
     <p><b>Edge.</b> (value in − value out) ÷ (value in + value out): value won as a share of value moved, so a busy GM and a quiet one compare fairly. The grade comes from Edge using the cutoffs below. A team needs at least <b id="m-min"></b> trades for a grade (fewer shows INC) and <b id="m-full"></b> for a full grade; in between, the grade carries an asterisk.</p>
     <p><b>Combined trades.</b> The game allows at most 5 assets per side in one trade, so bigger deals get entered as several trades on the same day between the same two teams. Those are combined into one deal here and graded as a whole; their trade number joins the parts, like 3844+3845+3846.</p>

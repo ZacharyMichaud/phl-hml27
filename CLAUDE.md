@@ -16,6 +16,7 @@ Zachary is a developer. Keep answers short and decision-ready. The page is publi
 
 1. Zachary drops the new save zip in `../saves/`.
 2. Build, check the output (counts, a few cards in a browser), commit `report.html` plus any script changes, push. Pages deploys on push.
+   - A `CHECK:` line in the output is a move entered like a waiver claim or an offer sheet. Ask Zachary which it was and add its ids to the matching list (see How the ledger is built) before pushing.
 
 Build command (reads every zip in `../saves/`, about a minute):
 
@@ -23,11 +24,16 @@ Build command (reads every zip in `../saves/`, about a minute):
 python build_report_cards.py
 ```
 
-From the 23 saves through Nov 2, 2027 this gives 10 combined deals, 238 deals and 479 ledger rows (2026-27: 169 deals; 2027-28: 69). The 341 rows before July 1, 2027 reproduce the old ledger exactly.
+From the 23 saves through Nov 2, 2027 this gives 8 combined deals, 215 deals and 433 ledger rows (2026-27: 169 deals; 2027-28: 46). The 341 rows before July 1, 2027 reproduce the old ledger exactly.
 
 ## How the ledger is built
 
 - Trades: the union of every save's `TradeHistory` (it resets at the season rollover), plus trades only the `DailyTradeRecapMailArgs` mails still hold (e.g. #4067, July 3, 2027).
+- Waiver claims and offer sheets are entered in the game as trades but aren't trades, so the build leaves them out (`WAIVER_CLAIMS`, `OFFER_SHEETS`; confirmed by Zachary, Nov 9, 2026):
+  - A waiver claim is the player plus the waiving team's 7th for the claiming team's 7th, then the two 7ths swapped back. Sept 18, 2027 (#4075 to #4086): Hunt FLA→COL, Gudas FLA→EDM, Balinskis FLA→SEA, Cole and Hart OTT→COL, Gaudreau SEA→COL. Oct 6, 2027 (#4096 to #4107): Primeau CAR→NYI, Jarry CGY→FLA, Pachal CGY→NYI, George NYI→CGY, Struble NYI→NYR, Benoît PHI→NYI.
+  - An offer sheet is the player for nothing: McKown, Samson and Jack Smith, MTL→MIN, July 9, 2027 (#4069 to #4071).
+  - Gustavsson LAK→NYI (#4062+4063, July 2, 2027) is entered like a claim but was a trade. It sits in `CHECKED_TRADES` with the OTT–VAN and FLA–PIT legs (see Open, below).
+  - The build prints a `CHECK:` line for any other same-day group where a pick goes out and comes back, or a side sends nothing.
 - A two-team row's value in is the partner's `ValueOutSum`; value out is its own.
 - Salary kept by the sender is not in the trade history. It is read from the sending team's `DeadCapSpace` (`IsRetainedContract`, `PlayerId`, `DaySigned` = trade day); share = that amount / the player's full cap hit. When a team sent the same player twice in one day, the tag goes on the last trade. A third team's retention is in its participant's `Contracts`.
 - Seasons run July 1 to June 30 (the league year). The page covers every season, with a season filter at the top that regrades from that season's trades only.
@@ -66,7 +72,7 @@ A save is a zip. The live state is `<root>/dynamic/d0.hlm`, gzip-compressed JSON
 - Each asset's value at the trade (`vt` on a card move), built per side:
   - A pick's `_Value` carries the day it was computed in `CachedValueExpiration` (`Item1` day of the year, `Item2` year), so the save holding the value from the trade day gives it exactly (355 of 360 picks).
   - A player's is `Values["0"]` from the trade-day save, one that already holds the trade first, else the nearest save.
-  - The side is then made to add up to its `ValueOutSum`: the gap goes to its players, in proportion to their size. Single-asset sides are exact. From the 23 saves through Nov 2, 2027, 124 of 506 sides sent several assets that don't add up as is (the build prints them); their split is flagged `ve` and estimated.
+  - The side is then made to add up to its `ValueOutSum`: the gap goes to its players, in proportion to their size. Single-asset sides are exact. From the 23 saves through Nov 2, 2027, 123 of 455 sides sent several assets that don't add up as is (the build prints them); their split is flagged `ve` and estimated.
 - Value today: the latest cached value (see How the ledger is built). A player now a free agent or retired counts as 0. All 51 traded players now in free agency still carry a cached value, which the cards counted before Nov 9, 2026.
 
 ## Ratings
@@ -90,7 +96,7 @@ A save is a zip. The live state is `<root>/dynamic/d0.hlm`, gzip-compressed JSON
 - Combined deals:
   - The game caps a trade at 5 assets per side. Same-day trades between the same two teams are graded as one deal (`3834+3856+3857`) when any part reaches 5 assets in for a team.
   - Zachary confirmed these same-day pairs were separate deals (`KEEP_SEPARATE`): 3837 (Pulock, MTL–NYI); 3972 (Nylander, OTT–TOR); the two CGY–NJD trades of July 1, 2027 (4049 and 4050); and the CAR–SEA pair of July 1, 2027 (4042 and 4044).
-  - `EXTRA_MERGES`: Calgary's two Oct 6, 2027 deals, each entered as several trades with a 7th-round pick passed back and forth (4098+4099 Jarry to FLA; 4100 to 4103 Pachal for George with NYI). Zachary confirmed this merge.
+  - `EXTRA_MERGES`: other groups to combine by hand; none now. The two it held, Calgary's Oct 6, 2027 moves, turned out to be waiver claims.
 - Three-team trades 3931, 3942 and 3991 each have BUF retaining salary. Value out is each team's `ValueOutSum`; value in is the sum of what it received, valued per asset at the trade. Values (in/out):
   - 3931: BUF 566/0, OTT 131/764, TOR 481/414
   - 3942: BUF 253/34, DET 511/879, OTT 913/764
