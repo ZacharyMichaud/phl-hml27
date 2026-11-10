@@ -61,7 +61,13 @@ A save is a zip. The live state is `<root>/dynamic/d0.hlm`, gzip-compressed JSON
 ## Values
 
 - `ValueOutSum` is the game's value of what that participant sends, at the moment of the trade. It adds 5% to the players sent by every participant after the first (the league's trade difficulty, 1.05), never to picks. This is confirmed exactly on the July 1, 2027 trades.
-- The Sept 1, 2026 opening save ("PHL Sept 1st 2026 Updated Rosters 2") has stale player values and no pick values. Use it for ratings, not values.
+- Some players also carry a 10% boost in `ValueOutSum` (× 1.1, or ÷ 1.1 when the value is negative), on either side. It looks like the receiving team's needs (`TradeBlock.Needs` on each team); not modelled.
+- The Sept 1, 2026 opening save ("PHL Sept 1st 2026 Updated Rosters 2") has stale player values and no pick values. Use it for ratings, not values. The build skips any save without pick values when it looks up values.
+- Each asset's value at the trade (`vt` on a card move), built per side:
+  - A pick's `_Value` carries the day it was computed in `CachedValueExpiration` (`Item1` day of the year, `Item2` year), so the save holding the value from the trade day gives it exactly (355 of 360 picks).
+  - A player's is `Values["0"]` from the trade-day save, one that already holds the trade first, else the nearest save.
+  - The side is then made to add up to its `ValueOutSum`: the gap goes to its players, in proportion to their size. Single-asset sides are exact. From the 23 saves through Nov 2, 2027, 124 of 506 sides sent several assets that don't add up as is (the build prints them); their split is flagged `ve` and estimated.
+- Value today: the latest cached value (see How the ledger is built). A player now a free agent or retired counts as 0. All 51 traded players now in free agency still carry a cached value, which the cards counted before Nov 9, 2026.
 
 ## Ratings
 
@@ -85,21 +91,17 @@ A save is a zip. The live state is `<root>/dynamic/d0.hlm`, gzip-compressed JSON
   - The game caps a trade at 5 assets per side. Same-day trades between the same two teams are graded as one deal (`3834+3856+3857`) when any part reaches 5 assets in for a team.
   - Zachary confirmed these same-day pairs were separate deals (`KEEP_SEPARATE`): 3837 (Pulock, MTL–NYI); 3972 (Nylander, OTT–TOR); the two CGY–NJD trades of July 1, 2027 (4049 and 4050); and the CAR–SEA pair of July 1, 2027 (4042 and 4044).
   - `EXTRA_MERGES`: Calgary's two Oct 6, 2027 deals, each entered as several trades with a 7th-round pick passed back and forth (4098+4099 Jarry to FLA; 4100 to 4103 Pachal for George with NYI). Zachary confirmed this merge.
-- Three-team trades 3931, 3942 and 3991 each have BUF retaining salary. Each team's value is split per asset by estimate. Current values (in/out):
-  - 3931: BUF 455/0, OTT 170/764, TOR 553/414
-  - 3942: BUF 203/34, DET 561/879, OTT 913/764
-  - 3991: BUF 507/0, CHI 1998/2386, NYI 2386/2505
+- Three-team trades 3931, 3942 and 3991 each have BUF retaining salary. Value out is each team's `ValueOutSum`; value in is the sum of what it received, valued per asset at the trade. Values (in/out):
+  - 3931: BUF 566/0, OTT 131/764, TOR 481/414
+  - 3942: BUF 253/34, DET 511/879, OTT 913/764
+  - 3991: BUF 541/0, CHI 1964/2386, NYI 2386/2505
+  - Until Nov 9, 2026 value in was a hand estimate (3931: BUF 455, OTT 170, TOR 553; 3942: BUF 203, DET 561; 3991: BUF 507, CHI 1998). The switch moved BUF from D- to D over all seasons, and for 2026-27 OTT from D to D- and TOR from C+ to C (3931 is now Even for TOR).
 - Open: OTT–VAN (DeMelo and Hamara swapped three times) and FLA–PIT (Verhaeghe and two 7ths back and forth) look like corrections. Each leg counts for now; ask Zachary before changing.
 
 ## Next task
 
 1. Done Nov 9, 2026: the ledger is built from the official saves and the workbook is retired.
-2. Show each asset's value at the trade next to its value today, marked up or down.
-   - For each trade, read each asset's `Values["0"]` or `_Value` from the save dated on the trade day. Apply the 5% to players sent by participants after the first.
-   - Check that they add up to each side's `ValueOutSum`, and report any side that doesn't.
-   - Every trade date now has a save in `../saves/` except 2027-06-24 and 2027-07-09.
-   - The Sep 1 deals need a save from after the opening-day trades. Without one, try the Sep 18 save (no ratings moved in between) and measure the fit.
-   - With dated values, three-team trades can be split by real per-asset values instead of the estimate.
+2. Done Nov 9, 2026: each asset's value at the trade next to its value today, as a bar (see Values and Page conventions). Three-team trades are split by those values. Trades on 2027-06-24 and 2027-07-09 have no same-day save; their players use the nearest save.
 
 ## Page conventions (Zachary's preferences)
 
@@ -107,6 +109,7 @@ A save is a zip. The live state is `<root>/dynamic/d0.hlm`, gzip-compressed JSON
 - Trade cards: no legends or explanatory text.
   - Potential badges use the game's motivation colours: m0 #2f6fd6, m1 #2b8a3e, m2 #e8890c (dark text), m3 #d03b3b, m4 #7f1d1d, m5 #6f7a89.
   - Shown player values include the game's 5% where it applied, so each column adds up.
+  - Each asset shows `value at the trade → today`, the change, and a bar; every bar on a card shares one scale. Grey is value kept, solid blue value gained, faded red value lost; below zero, faded blue is negative value shed and solid red negative value taken on. Each side ends with a Total row in the same style, aligned across sides.
 - Light and dark mode. Check a phone width.
 - Season filter: "All seasons" by default; not kept in the URL.
 - Hash links: `#CGY` for a team view, `#trade-<id>` for a card. Any part id works.

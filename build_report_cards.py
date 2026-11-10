@@ -19,6 +19,7 @@ import datetime
 import glob
 import gzip
 import json
+import math
 import os
 import re
 import zipfile
@@ -53,10 +54,6 @@ ASSET_CAP = 5
 KEEP_SEPARATE = {"3837", "3972", "4049", "4042"}
 # Calgary's Oct 6, 2027 deals, each entered as several trades with a 7th-round pick passed back and forth (confirmed by Zachary).
 EXTRA_MERGES = [("4098", "4099"), ("4100", "4101", "4102", "4103")]
-# Three-team trades (BUF retaining salary): value in / value out per team, split per asset by estimate.
-THREE_TEAM = {"3931": {"BUF": (455, 0), "OTT": (170, 764), "TOR": (553, 414)},
-              "3942": {"BUF": (203, 34), "DET": (561, 879), "OTT": (913, 764)},
-              "3991": {"BUF": (507, 0), "CHI": (1998, 2386), "NYI": (2386, 2505)}}
 # A trade counts as Even when its balance, net value / total value moved, is
 # within this band either way: close enough that both sides' AI GMs would take it.
 EVEN_BAND = 0.10
@@ -107,7 +104,7 @@ def read_save(path):
         "day": sl["LastSaveDay"][:10],
         "code": {int(k): t["ShortCity"] for k, t in lg["TeamList"].items()},
         "leagues": {str(k): v.get("Abbreviation") or "" for k, v in sl["Leagues"].items()},
-        "picks": [{k: p.get(k) for k in ("Year", "Round", "Original", "Owner", "_Value")} for p in lg["PickList"]],
+        "picks": [{k: p.get(k) for k in ("Year", "Round", "Original", "Owner", "_Value", "CachedValueExpiration")} for p in lg["PickList"]],
         "players": players,
         # salary a team kept on a player it traded: (team id, player id, trade day, yearly amount)
         "dead": [(int(k), str(c.get("PlayerId")), (c.get("DaySigned") or "")[:10], (c.get("Salaries") or [0])[min(c.get("SeasonPassed") or 0, len(c.get("Salaries") or [0]) - 1)])
@@ -225,14 +222,97 @@ def value_now(pid):
     return None
 
 
-pick_value = {(p["Year"], p["Round"], p["Original"]): p.get("_Value") for p in state["picks"]}
+# ---- Each asset's value at the trade ---------------------------------------------
+# The trade history keeps only each side's total (ValueOutSum). A pick's cached value carries the
+# day it was computed (CachedValueExpiration: day of the year, year), so a save holding the value
+# from the trade day gives it exactly. A player's is his cached value in the trade-day save (one
+# that already holds the trade first), else the nearest save. The opening save has no pick values
+# and stale player values, so saves without pick values are skipped. Each side is then made to add
+# up to its recorded total: the gap goes to its players, in proportion to their size, since the
+# game's adjustments (the 5% and a 10% boost on some players, apparently the receiving team's
+# needs) only move players.
+value_states = [s for s in states if any(p.get("_Value") is not None for p in s["picks"])]
+value_days = [datetime.date.fromisoformat(s["day"]) for s in value_states]
+holds_trade = [{str(t["Id"]) for t in s["trades"]} for s in value_states]
+pick_maps = [{(p["Year"], p["Round"], p["Original"]): p for p in s["picks"]} for s in value_states]
+
+
+def base_value(kind, key, tid, day):
+    """One asset's own value on the trade day, before the trade's adjustments."""
+    d = datetime.date.fromisoformat(day)
+    if kind == "k":
+        stamp = (d.timetuple().tm_yday, d.year)
+        for pm in pick_maps:
+            x = pm.get(key) or {}
+            c = x.get("CachedValueExpiration") or {}
+            if x.get("_Value") is not None and (c.get("Item1"), c.get("Item2")) == stamp:
+                return x["_Value"]
+    same = [i for i, s in enumerate(value_states) if s["day"] == day]
+    order = [i for i in same if tid in holds_trade[i]] + [i for i in reversed(same) if tid not in holds_trade[i]]
+    order += sorted((i for i in range(len(value_states)) if value_states[i]["day"] != day),
+                    key=lambda i: (abs((value_days[i] - d).days), value_days[i] > d))
+    for i in order:
+        if kind == "p":
+            v = ((value_states[i]["players"].get(key) or {}).get("Values") or {}).get("0")
+        else:
+            v = (pick_maps[i].get(key) or {}).get("_Value")
+        if v is not None:
+            return v
+    return None
+
+
+def round_to(total, vals):
+    """Round to integers that still add up to total (largest remainder)."""
+    out = [math.floor(v) for v in vals]
+    for j in sorted(range(len(vals)), key=lambda j: out[j] - vals[j])[:round(total) - sum(out)]:
+        out[j] += 1
+    return out
+
+
+_splits = {}
+
+
+def split_at_trade(tid, t):
+    """{(participant index, "p" or "k", id): value at the trade}, each side adding up to its recorded
+    total, and the participants whose split is estimated (several assets that don't add up as is)."""
+    if tid not in _splits:
+        _splits[tid] = _split_at_trade(tid, t)
+    return _splits[tid]
+
+
+def _split_at_trade(tid, t):
+    day = t["Date"][:10]
+    out, loose = {}, []
+    for i, p in enumerate(t["Participants"]):
+        mk = 1.05 if i >= TRADE_MARKUP_FROM_PARTICIPANT else 1
+        w = {}
+        for a in p["PlayersId"]:
+            v = base_value("p", str(a["Athlete"]), tid, day)
+            w[("p", str(a["Athlete"]))] = None if v is None else v * mk
+        for k in p["PicksId"]:
+            w[("k", str(k["Id"]))] = base_value("k", (int(k["Year"]), int(k["Round"]), int(k["OriginalTeam"])), tid, day)
+        if not w:
+            continue
+        total = p.get("ValueOutSum") or 0
+        gap = total - sum(v for v in w.values() if v is not None)
+        if len(w) > 1 and (None in w.values() or abs(gap) > max(1.5, 0.004 * abs(total))):
+            loose.append(i)
+        w = {k: v or 0 for k, v in w.items()}
+        movers = [k for k in w if k[0] == "p" and w[k]] or [k for k in w if w[k]] or list(w)
+        size = sum(abs(w[k]) for k in movers)
+        for k in movers:
+            w[k] += gap * (abs(w[k]) / size if size else 1 / len(movers))
+        for k, v in zip(w, round_to(total, list(w.values()))):
+            out[(i,) + k] = v
+    return out, loose
 
 
 def trade_rows(tid, t):
     """One ledger row per team: what it got and sent, with the game's recorded value of each side."""
     ps = t["Participants"]
     sides = [code[p["TeamId"]] for p in ps]
-    got = [[] for _ in ps]  # (text, kind, sender index, weight)
+    at_trade = split_at_trade(tid, t)[0]
+    got = [[] for _ in ps]  # (text, kind, sender index, value at the trade)
     third = defaultdict(list)
     for i, p in enumerate(ps):
         sent = {str(a["Athlete"]) for a in p["PlayersId"]}
@@ -246,13 +326,11 @@ def trade_rows(tid, t):
             text = nm + (f" ({overall(q)}, {age_on(q, state['day'])})" if q else "")
             if pid in kept:
                 text += f" [sender keeps {kept[pid]}% of salary]"
-            w = abs(value_now(pid) or 0) * (1.05 if i >= TRADE_MARKUP_FROM_PARTICIPANT else 1)
-            got[a.get("TeamIndex", 0)].append((text, "p", i, w))
+            got[a.get("TeamIndex", 0)].append((text, "p", i, at_trade.get((i, "p", pid), 0)))
         for k in p["PicksId"]:
             orig = int(k["OriginalTeam"])
             text = f"{k['Year']} R{k['Round']} ({code.get(orig, orig)})"
-            w = abs(pick_value.get((int(k["Year"]), int(k["Round"]), orig)) or 0)
-            got[k.get("TeamId", 0)].append((text, "k", i, w))
+            got[k.get("TeamId", 0)].append((text, "k", i, at_trade.get((i, "k", str(k["Id"])), 0)))
     rows = []
     for i, team in enumerate(sides):
         ins = got[i]
@@ -260,15 +338,9 @@ def trade_rows(tid, t):
         if len(ps) == 2:
             vin, vout, note = ps[1 - i].get("ValueOutSum") or 0, ps[i].get("ValueOutSum") or 0, ""
             partner = sides[1 - i]
-        else:
-            note = "3-team trade: values split per asset (estimate)"
-            if tid in THREE_TEAM:
-                vin, vout = THREE_TEAM[tid][team]
-            else:  # split each sender's recorded value across what it sent, by today's values
-                vout, vin = ps[i].get("ValueOutSum") or 0, 0
-                for j, p in enumerate(ps):
-                    allw = sum(x[3] for g in got for x in g if x[2] == j) or 1
-                    vin += round((p.get("ValueOutSum") or 0) * sum(x[3] for x in ins if x[2] == j) / allw) if j != i else 0
+        else:  # each sender's recorded value, split across what it sent by each asset's value at the trade
+            note = "3-team trade: values split per asset"
+            vin, vout = sum(x[3] for x in ins), ps[i].get("ValueOutSum") or 0
             if third[i]:
                 note += "; " + "; ".join(f"retains {pct}% of a salary" for pct in third[i])
             senders = list(dict.fromkeys(sides[x[2]] for x in ins))
@@ -440,22 +512,29 @@ def build_cards(deal_ids):
         day = t["Date"][:10]
         ps = t["Participants"]
         sides = [code.get(p["TeamId"], str(p["TeamId"])) for p in ps]
+        at_trade, loose = split_at_trade(tid, t)
+        split_loose.extend((tid, sides[i]) for i in loose)
         moves, holds = [], []
         for i, p in enumerate(ps):
             kept = kept_by(p, day, tid)
             for nm, a in zip(p["PlayersName"], p["PlayersId"]):
                 pid, to = str(a["Athlete"]), sides[a.get("TeamIndex", 0)]
                 person(pid, nm)
-                m = {"a": "p:" + pid, "f": sides[i], "t": to, "part": tid, "s": nm}
+                m = {"a": "p:" + pid, "f": sides[i], "t": to, "part": tid, "s": nm, "vt": at_trade.get((i, "p", pid))}
                 if i >= TRADE_MARKUP_FROM_PARTICIPANT:
                     m["mk"] = 1
+                if i in loose:
+                    m["ve"] = 1
                 if pid in kept:
                     m["ret"] = kept[pid]
                 then(m, pid, day)
                 moves.append(m)
             for k in p["PicksId"]:
-                moves.append({"a": pick(str(k["Id"]), int(k["Year"]), int(k["Round"]), code.get(int(k["OriginalTeam"]), k["OriginalTeam"])),
-                              "f": sides[i], "t": sides[k.get("TeamId", 0)], "part": tid})
+                m = {"a": pick(str(k["Id"]), int(k["Year"]), int(k["Round"]), code.get(int(k["OriginalTeam"]), k["OriginalTeam"])),
+                     "f": sides[i], "t": sides[k.get("TeamId", 0)], "part": tid, "vt": at_trade.get((i, "k", str(k["Id"])))}
+                if i in loose:
+                    m["ve"] = 1
+                moves.append(m)
             for c in p.get("Contracts") or []:
                 person(str(c["Item1"]))
                 holds.append({"team": sides[i], "p": str(c["Item1"]), "pct": round(c["Item2"] * 100), "part": tid})
@@ -476,10 +555,17 @@ def build_cards(deal_ids):
 
 
 deal_ids = sorted({d["trade"] for d in ledger}, key=lambda t: _num(t.split("+")[0]))
+split_loose = []
 people, pick_info, deals = build_cards(deal_ids)
 save_info = {"date": state["day"]}
 print(f"trade cards: {len(deals)} deals, {sum(len(d['moves']) for d in deals.values())} assets, "
       f"today's numbers from the {state['day']} save, rating history from {len(states)} saves")
+n_sides = sum(1 for d in deals.values() for p in d["parts"] for q in history[p["id"]]["Participants"] if q["PlayersId"] or q["PicksId"])
+print(f"values at the trade: {len(split_loose)} of {n_sides} sides sent several assets whose trade-day values don't add up "
+      f"to the recorded total, so the split is estimated (trade, sender): " + ", ".join(f"{t} {s}" for t, s in split_loose))
+for d in ledger:
+    if d["note"].startswith("3-team"):
+        print(f"3-team {d['trade']} {d['team']}: value in {d['value_in']}, out {d['value_out']}")
 
 data = {
     "ledger": ledger, "cutoffs": cutoffs, "teams": teams,
@@ -502,14 +588,14 @@ TEMPLATE = r"""<!doctype html>
     color-scheme: light dark;
     --ice: #f2f6f9; --paper: #ffffff; --ink: #11203a; --ink-soft: #5b6b82; --line: #d6dfe8; --line-strong: #aebbcb;
     --blue: #1d5fa6; --blue-soft: #dbe8f7; --red: #b4121c; --red-soft: #f8dcdc; --stamp: #b4121c; --hover: #e9f0f8;
-    --scrim: rgba(17, 32, 58, .55);
+    --scrim: rgba(17, 32, 58, .55); --bar: #7f8ea3; --gone: .3;
     --sans: "Helvetica Neue", Helvetica, Arial, "Segoe UI", Roboto, sans-serif;
     padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);
   }
   @media (prefers-color-scheme: dark) { :root {
     --ice: #0e1726; --paper: #15213a; --ink: #edf2f8; --ink-soft: #9fb0c6; --line: #2a3850; --line-strong: #46587a;
     --blue: #6aa6ee; --blue-soft: #1c3458; --red: #f0636b; --red-soft: #4b1f24; --stamp: #f0636b; --hover: #1d2d4a;
-    --scrim: rgba(3, 8, 16, .66);
+    --scrim: rgba(3, 8, 16, .66); --bar: #5d7090; --gone: .42;
   } }
   * { box-sizing: border-box; }
   html { scroll-padding-top: env(safe-area-inset-top, 0px); }
@@ -590,7 +676,7 @@ TEMPLATE = r"""<!doctype html>
   .verdict .then { font-size: 17px; font-weight: 700; letter-spacing: -0.01em; max-width: none; }
   .verdict .now { color: var(--ink-soft); margin-top: 3px; max-width: none; }
   .sides { display: grid; grid-template-columns: repeat(var(--n, 2), minmax(0, 1fr)); }
-  .side { margin: 0; padding: 12px 22px 18px; border-right: 1px solid var(--line); min-width: 0; }
+  .side { margin: 0; padding: 12px 22px 18px; border-right: 1px solid var(--line); min-width: 0; display: flex; flex-direction: column; }
   .side:last-child { border-right: 0; }
   .side-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding-bottom: 7px; border-bottom: 1px solid var(--line-strong); }
   .side h3 { font-size: 15px; font-weight: 700; margin: 0; }
@@ -609,22 +695,27 @@ TEMPLATE = r"""<!doctype html>
   .a-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
   .a-name { font-weight: 600; overflow-wrap: anywhere; }
   .a-val { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .a-val.neg { color: var(--red); }
-  .a-val.none { color: var(--ink-soft); font-weight: 400; }
+  .a-val .was { color: var(--ink-soft); font-weight: 400; }
+  .a-val.none, .a-val .none { color: var(--ink-soft); font-weight: 400; }
+  /* Value at the trade -> today: a bar per asset, on one scale for the whole card. */
+  .a-bar { display: flex; align-items: center; gap: 10px; margin: 5px 0 4px; }
+  .vbar { position: relative; flex: 1; min-width: 4rem; height: 8px; }
+  .vbar.big { height: 12px; }
+  .vbar i { position: absolute; top: 0; bottom: 0; }
+  .vbar .kept { background: var(--bar); }
+  .vbar .up { background: var(--blue); } .vbar .down { background: var(--red); }
+  .vbar .gone { opacity: var(--gone); }
+  .vbar .rr { border-radius: 0 4px 4px 0; } .vbar .rl { border-radius: 4px 0 0 4px; }
+  .vbar .zero { top: -3px; bottom: -3px; width: 1px; margin-left: -0.5px; background: var(--ink-soft); }
+  .a-chg { flex: none; min-width: 4.6em; text-align: right; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .a-chg.up { color: var(--blue); } .a-chg.down { color: var(--red); } .a-chg.flat { color: var(--ink-soft); font-weight: 400; }
+  .total { margin: 0; margin-top: auto; padding-top: 12px; }
+  .total .a-name, .total .a-val { font-weight: 700; }
+  @media (forced-colors: active) { .vbar .kept { background: GrayText; } .vbar .up, .vbar .down { background: CanvasText; } }
   .a-meta { color: var(--ink-soft); font-size: 13px; }
   .a-flag { color: var(--ink); font-size: 13px; }
   .a-part { display: inline-block; margin-left: 6px; padding: 0 5px; border: 1px solid var(--line-strong); border-radius: 3px; color: var(--ink-soft); font-size: 12px; font-weight: 400; vertical-align: 1px; }
   .asset.hold .a-name { font-weight: 400; }
-  .tot { margin: 10px 0 0; }
-  .tot div { display: flex; justify-content: space-between; gap: 12px; padding: 1px 0; font-variant-numeric: tabular-nums; }
-  .tot dt { color: var(--ink-soft); font-size: 13px; }
-  .tot dd { margin: 0; color: var(--ink-soft); }
-  .tot .was { border-top: 1px solid var(--line-strong); margin-top: 4px; padding-top: 5px; }
-  .tot .was dd, .tot .sum dd { color: var(--ink); }
-  .tot .sum dt, .tot .sum dd { font-weight: 700; color: var(--ink); }
-  .tot .chg dd { font-weight: 700; }
-  .tot .chg dd.up { color: var(--blue); } .tot .chg dd.down { color: var(--red); }
-  .tot-note { color: var(--ink-soft); font-size: 12px; margin-top: 4px; }
   .card-notes { padding: 6px 22px 22px; padding-bottom: calc(22px + env(safe-area-inset-bottom, 0px)); color: var(--ink-soft); font-size: 13px; }
   .card-notes p { margin-top: 8px; max-width: 86ch; }
   @media (max-width: 680px) {
@@ -731,8 +822,8 @@ TEMPLATE = r"""<!doctype html>
     <p><b>Value.</b> The game's own trade valuation of each side at the time of the deal, as the save records it. Value in is what a team received; value out is what it sent. A trade is a Win or a Loss for a team only when the gap is more than <b id="m-band"></b> of the value moved; inside that band it is Even, a deal both sides' AI GMs would accept. Even trades count as neither a win nor a loss, but their value still counts toward Edge.</p>
     <p><b>Edge.</b> (value in − value out) ÷ (value in + value out): value won as a share of value moved, so a busy GM and a quiet one compare fairly. The grade comes from Edge using the cutoffs below. A team needs at least <b id="m-min"></b> trades for a grade (fewer shows INC) and <b id="m-full"></b> for a full grade; in between, the grade carries an asterisk.</p>
     <p><b>Combined trades.</b> The game allows at most 5 assets per side in one trade, so bigger deals get entered as several trades on the same day between the same two teams. Those are combined into one deal here and graded as a whole; their trade number joins the parts, like 3844+3845+3846.</p>
-    <p id="m-cards" hidden><b>Trade cards.</b> Click any trade to see every asset: each player's overall and potential at the trade and today, and each asset's value in the save of <span id="m-save"></span> (or the last save that holds one). A player who has since left as a free agent or retired counts as 0, and a 2027 pick counts as the player drafted with it.</p>
-    <p><b>What it measures.</b> Asset value, not whether a trade helped a team win. Cap dumps, rentals and win-now veterans for young talent count as value lost. Where a team took picks to retain salary, that shows as value won, since the game does not price the cap cost. Three-team trades are split per asset by estimate. Players are shown with their overall and age as of the latest save, not at trade time.</p>
+    <p id="m-cards" hidden><b>Trade cards.</b> Click any trade to see every asset: each player's overall and potential at the trade and today, and each asset's value at the trade and today. At the trade, each side's recorded value is split across its assets by their values in the save of the trade day; where those don't add up to it, the gap is spread over the side's players. Today is the save of <span id="m-save"></span> (or the last save that holds a value). A player who has since left as a free agent or retired counts as 0, and a used pick counts as the player drafted with it.</p>
+    <p><b>What it measures.</b> Asset value, not whether a trade helped a team win. Cap dumps, rentals and win-now veterans for young talent count as value lost. Where a team took picks to retain salary, that shows as value won, since the game does not price the cap cost. In a three-team trade, what each team sent is split between the other two by each asset's value on the trade day. Players are shown with their overall and age as of the latest save, not at trade time.</p>
     <table class="cut"><thead><tr><th class="num">Minimum Edge</th><th>Grade</th></tr></thead><tbody id="cut-body"></tbody></table>
   </section>
 
@@ -997,17 +1088,20 @@ TEMPLATE = r"""<!doctype html>
   const WORD = {Win: 'a win', Loss: 'a loss', Even: 'even'};
   const listJoin = (a) => a.length < 3 ? a.join(' and ') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1];
   const pickName = (k) => k.y + ' ' + (ORD[k.r] || 'R' + k.r) + ' round (' + k.o + ')';
+  // A player who has left as a free agent or retired is worth nothing today.
+  const worth = (p) => p.x ? 0 : p.v ?? null;
   const assetOf = (m) => {
     const id = m.a.slice(2);
-    if (m.a[0] === 'p') { const p = P[id] || {n: id}; return {kind: 'p', p, v: p.v ?? null}; }
+    if (m.a[0] === 'p') { const p = P[id] || {n: id}; return {kind: 'p', p, v: worth(p)}; }
     const k = K[id] || {}, d = k.dr ? P[k.dr] || {} : null;
-    return {kind: 'k', k, d, v: d ? d.v ?? null : k.v ?? null};
+    return {kind: 'k', k, d, v: d ? worth(d) : k.v ?? null};
   };
   // The game adds 5% to the players one side sends (trade difficulty 1.05); a shown value carries it the same way.
   const shown = (m, v) => v == null ? null : m.mk ? Math.round(v * 1.05) : v;
+  const nowOf = (m) => shown(m, assetOf(m).v);
   const sideNow = (deal, team, dir) => {
     let now = 0;
-    for (const m of deal.moves) if ((dir === 'in' ? m.t : m.f) === team) now += shown(m, assetOf(m).v) || 0;
+    for (const m of deal.moves) if ((dir === 'in' ? m.t : m.f) === team) now += nowOf(m) || 0;
     return {now};
   };
   const callOf = (vin, vout) => {
@@ -1028,7 +1122,6 @@ TEMPLATE = r"""<!doctype html>
     return 'At the trade (three teams): ' + s.map((r) => nameOf(r.team) + ' ' + fmtNet(r.net) + ', ' + WORD[r.result]).join('; ') + '.';
   };
   const nowLine = (deal, rows, lead) => {
-    if (deal.parts.every((p) => p.est)) return 'This trade came after the ' + fmtLong(SAVE.date) + ' save, so its values are estimated from that save.';
     const now = (r) => callOf(sideNow(deal, r.team, 'in').now, sideNow(deal, r.team, 'out').now);
     if (rows.length === 2) {
       const c = now(lead);
@@ -1048,7 +1141,50 @@ TEMPLATE = r"""<!doctype html>
     const d = b - a;
     return el('span', 'd ' + (d > 0 ? 'up' : d < 0 ? 'down' : 'flat'), d > 0 ? '+' + d : d < 0 ? '−' + Math.abs(d) : 'no change');
   };
-  const assetItem = (m, multi, three, est) => {
+  // Value at the trade and today, drawn as one bar on a scale shared by the whole card. Grey is value
+  // kept, solid blue value gained, faded red value lost. Below zero (a contract worth less than nothing)
+  // faded blue is negative value shed and solid red negative value taken on.
+  const scaleOf = (vals) => {
+    let lo = 0, hi = 0;
+    for (const v of vals) if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    return {lo, hi: hi > lo ? hi : lo + 1};
+  };
+  const valueBar = (then, now, sc, big) => {
+    const b = el('span', 'vbar' + (big ? ' big' : ''));
+    b.setAttribute('aria-hidden', 'true');
+    const at = (v) => (v - sc.lo) / (sc.hi - sc.lo) * 100;
+    const top = Math.max(0, then ?? 0, now ?? 0), bottom = Math.min(0, then ?? 0, now ?? 0);
+    const span = (a, c, cls, inner) => {  // inner: the end that touches the grey part, kept 2px apart
+      const lo = Math.min(a, c), hi = Math.max(a, c), w = at(hi) - at(lo);
+      if (w < 0.1) return;
+      const gap = inner != null && w > 3 ? 2 : 0, s = el('i', cls);
+      s.style.left = 'calc(' + at(lo) + '% + ' + (inner === lo ? gap : 0) + 'px)';
+      s.style.width = 'calc(' + w + '% - ' + gap + 'px)';
+      if (hi === top && top > 0) s.classList.add('rr');
+      if (lo === bottom && bottom < 0) s.classList.add('rl');
+      b.appendChild(s);
+    };
+    if (sc.lo < 0) { const z = el('i', 'zero'); z.style.left = at(0) + '%'; b.appendChild(z); }
+    if (then == null || now == null) { span(0, then ?? now ?? 0, 'kept' + (now == null ? ' gone' : '')); return b; }
+    const dir = now > then ? 'up' : 'down';
+    if (then * now < 0) { span(then, 0, dir + ' gone'); span(0, now, dir); return b; }
+    const kept = Math.abs(then) < Math.abs(now) ? then : now, far = kept === then ? now : then;
+    span(0, kept, 'kept');
+    if (far !== kept) span(kept, far, dir + (far === now ? '' : ' gone'), kept || null);
+    return b;
+  };
+  const fromTo = (then, now, est) => {
+    const v = el('span', 'a-val'), was = el('span', 'was', (then == null ? '—' : fmtInt(then)) + ' → ');
+    if (est) was.title = 'Estimated: this side’s assets did not add up to its recorded value, so the gap is spread over its players';
+    v.append(was, el('span', now == null ? 'none' : '', now == null ? '—' : fmtInt(now)));
+    return v;
+  };
+  const change = (then, now) => {
+    const d = then == null || now == null ? null : now - then;
+    return el('span', 'a-chg ' + (d > 0 ? 'up' : d < 0 ? 'down' : 'flat'), d == null ? '' : d ? fmtNet(d) : '±0');
+  };
+  const valueRow = (then, now, sc, big) => { const row = el('div', 'a-bar'); row.append(valueBar(then, now, sc, big), change(then, now)); return row; };
+  const assetItem = (m, multi, three, sc) => {
     const a = assetOf(m), li = el('li', 'asset');
     const topLine = el('div', 'a-top'), nm = el('span', 'a-name');
     const lines = [], flags = [];
@@ -1059,13 +1195,13 @@ TEMPLATE = r"""<!doctype html>
       // Overall at the trade and now: the improved-or-not signal.
       const ovr = el('div', 'a-ovr');
       if (p.x === 'ret') ovr.append('OVR ' + (m.ot ?? '—') + ' at the trade, retired since');
-      else if (m.ot != null && p.ovr != null && !est) { ovr.append('OVR ' + m.ot + ' → ' + p.ovr + ' '); ovr.appendChild(delta(m.ot, p.ovr)); }
+      else if (m.ot != null && p.ovr != null) { ovr.append('OVR ' + m.ot + ' → ' + p.ovr + ' '); ovr.appendChild(delta(m.ot, p.ovr)); }
       else if (p.ovr != null) ovr.append('OVR ' + p.ovr);
       if (ovr.childNodes.length) lines.push(ovr);
-      const age = m.at != null ? 'age ' + m.at + (est ? '' : ' at the trade') : p.age ? 'age ' + p.age : '';
+      const age = m.at != null ? 'age ' + m.at + ' at the trade' : p.age ? 'age ' + p.age : '';
       lines.push(el('div', 'a-meta', [p.pos, age].filter(Boolean).join(', ') + (p.con && !p.x ? '. ' + p.con : '')));
       if (p.x === 'fa') flags.push('Free agent now, so no value');
-      else if (p.org && p.org !== m.t && !est) flags.push('Now with ' + p.org);
+      else if (p.org && p.org !== m.t) flags.push('Now with ' + p.org);
       if (m.ret) flags.push(m.f + ' kept ' + m.ret + '% of his salary');
     } else {
       nm.append(pickName(a.k));
@@ -1075,25 +1211,19 @@ TEMPLATE = r"""<!doctype html>
         const b = badge(a.d); if (b) used.appendChild(b);
         lines.push(used);
         lines.push(el('div', 'a-meta', [a.d.pos, a.d.ovr != null ? 'OVR ' + a.d.ovr : '', a.d.age ? 'age ' + a.d.age : ''].filter(Boolean).join(', ')));
-        if (a.d.x === 'fa') flags.push('Free agent now'); else if (a.d.org && a.d.org !== m.t && !est) flags.push('Now with ' + a.d.org);
+        if (a.d.x === 'fa') flags.push('Free agent now'); else if (a.d.org && a.d.org !== m.t) flags.push('Now with ' + a.d.org);
       } else if (a.k.y) {
-        lines.push(el('div', 'a-meta', 'Not used yet' + (a.k.own && a.k.own !== m.t && !est ? ', now owned by ' + a.k.own : '')));
+        lines.push(el('div', 'a-meta', 'Not used yet' + (a.k.own && a.k.own !== m.t ? ', now owned by ' + a.k.own : '')));
       }
     }
     if (three) lines.unshift(el('div', 'a-meta', 'From ' + m.f));
     if (multi) nm.append(' ', el('span', 'a-part', '#' + m.part));
-    const v = shown(m, a.v);
-    const val = el('span', 'a-val' + (v == null ? ' none' : v < 0 ? ' neg' : ''), v == null ? '—' : fmtInt(v));
-    topLine.append(nm, val); li.appendChild(topLine);
+    const then = m.vt ?? null, now = shown(m, a.v);
+    topLine.append(nm, fromTo(then, now, m.ve)); li.append(topLine, valueRow(then, now, sc));
     li.append(...lines);
     if (flags.length) li.appendChild(el('div', 'a-flag', flags.join('. ') + '.'));
-    li._v = v ?? -Infinity;
+    li._v = Math.max(then ?? -Infinity, now ?? -Infinity);
     return li;
-  };
-  const totals = (rows) => {
-    const dl = el('dl', 'tot');
-    for (const [cls, label, value, vcls] of rows) { const d = el('div', cls); d.append(el('dt', '', label), el('dd', vcls || '', value)); dl.appendChild(d); }
-    return dl;
   };
   const renderDeal = (tid, persp) => {
     const rows = rowsOf[tid], deal = DEALS[tid], lead = leadRow(rows, persp);
@@ -1108,17 +1238,22 @@ TEMPLATE = r"""<!doctype html>
     $('deal-now').textContent = deal && SAVE ? nowLine(deal, rows, lead) : '';
     $('deal-now').hidden = !(deal && SAVE);
     const box = $('deal-sides'); box.replaceChildren(); box.style.setProperty('--n', order.length);
-    const estAll = deal && deal.parts.every((p) => p.est);
+    // What each team received, at the trade and today; every bar on the card shares one scale.
+    const sums = {};
+    for (const r of order) {
+      sums[r.team] = {then: 0, now: 0};
+      for (const m of deal ? deal.moves : []) if (m.t === r.team) { sums[r.team].then += m.vt || 0; sums[r.team].now += nowOf(m) || 0; }
+    }
+    const sc = scaleOf(deal ? [...deal.moves.flatMap((m) => [m.vt, nowOf(m)]), ...Object.values(sums).flatMap((s) => [s.then, s.now])] : []);
     for (const r of order) {
       const sec = el('section', 'side' + (persp && r.team === persp ? ' me' : ''));
       const hd = el('div', 'side-head');
       hd.append(el('h3', '', nameOf(r.team) + ' received'));
-      if (deal && SAVE) hd.append(el('span', 'col-l', 'Value today'));
+      if (deal) hd.append(el('span', 'col-l', 'At the trade → today'));
       sec.appendChild(hd);
       const ul = el('ul', 'assets');
       if (deal) {
-        const estParts = new Set(deal.parts.filter((p) => p.est).map((p) => p.id));
-        const lis = deal.moves.filter((m) => m.t === r.team).map((m) => assetItem(m, partIds.length > 1, three, estParts.has(m.part)));
+        const lis = deal.moves.filter((m) => m.t === r.team).map((m) => assetItem(m, partIds.length > 1, three, sc));
         lis.sort((a, b) => b._v - a._v);
         ul.append(...lis);
         for (const h of deal.holds || []) if (h.team === r.team) {
@@ -1128,21 +1263,14 @@ TEMPLATE = r"""<!doctype html>
           ul.appendChild(li);
         }
         if (!ul.children.length) ul.appendChild(el('li', 'asset a-meta', 'Nothing'));
+        const tot = el('div', 'total'), t = el('div', 'a-top'), s = sums[r.team];
+        t.append(el('span', 'a-name', 'Total'), fromTo(s.then, s.now));
+        tot.append(t, valueRow(s.then, s.now, sc, true));
+        sec.append(ul, tot);
       } else {
         for (const p of parts(r.entries)) { const li = el('li', 'asset'); li.appendChild(el('div', 'a-name', p)); ul.appendChild(li); }
         if (!ul.children.length) ul.appendChild(el('li', 'asset a-meta', 'Nothing'));
-      }
-      sec.appendChild(ul);
-      const atLabel = estAll ? 'Estimated value at the trade' : three ? 'Value at the trade (estimate)' : 'Game’s value at the trade';
-      if (deal && SAVE && !estAll) {
-        const s = sideNow(deal, r.team, 'in'), chg = s.now - r.value_in;
-        sec.appendChild(totals([
-          ['was', atLabel, fmtInt(r.value_in)],
-          ['sum', 'Same assets today', fmtInt(s.now)],
-          ['chg', 'Change since the trade', fmtNet(chg), chg > 0 ? 'up' : chg < 0 ? 'down' : 'flat'],
-        ]));
-      } else {
-        sec.appendChild(totals([['sum', atLabel, fmtInt(r.value_in)]]));
+        sec.append(ul, el('p', 'total a-meta', 'Game’s value at the trade: ' + fmtInt(r.value_in)));
       }
       box.appendChild(sec);
     }
@@ -1196,14 +1324,15 @@ TEMPLATE = r"""<!doctype html>
   // ---- Every asset, as CSV ----
   if (SAVE) {
     $('m-cards').hidden = false; $('m-save').textContent = fmtLong(SAVE.date);
-    const acols = ['date', 'trade', 'part', 'from', 'to', 'asset', 'type', 'position', 'ovr_at_trade', 'ovr_now', 'potential', 'motivation', 'age_at_trade', 'contract_now', 'now_with', 'value_now', 'plus_5pct_at_trade'];
+    // Values as the card shows them: both carry the game's 5% where it applied.
+    const acols = ['date', 'trade', 'part', 'from', 'to', 'asset', 'type', 'position', 'ovr_at_trade', 'ovr_now', 'potential', 'motivation', 'age_at_trade', 'contract_now', 'now_with', 'value_at_trade', 'value_now', 'plus_5pct_at_trade', 'value_at_trade_estimated'];
     const out = [acols];
     for (const t of dealIds.slice().reverse()) {
       const deal = DEALS[t]; if (!deal) continue;
       for (const m of deal.moves) {
-        const a = assetOf(m);
-        if (a.kind === 'p') out.push([rowsOf[t][0].date, t, m.part, m.f, m.t, a.p.n, 'player', a.p.pos, m.ot ?? '', a.p.ovr ?? '', a.p.pot || '', a.p.pot ? MOT[a.p.mot ?? 0] : '', m.at ?? '', a.p.con, a.p.x === 'ret' ? 'Retired' : a.p.x === 'fa' ? 'FA' : a.p.org, a.v, m.mk ? 'yes' : '']);
-        else out.push([rowsOf[t][0].date, t, m.part, m.f, m.t, pickName(a.k) + (a.d ? ', used on ' + a.d.n : ''), a.d ? 'pick, used' : 'pick', a.d ? a.d.pos : '', '', a.d ? a.d.ovr ?? '' : '', a.d ? a.d.pot || '' : '', a.d && a.d.pot ? MOT[a.d.mot ?? 0] : '', '', '', a.d ? (a.d.x === 'fa' ? 'FA' : a.d.org) : a.k.own, a.v, '']);
+        const a = assetOf(m), vals = [m.vt ?? '', nowOf(m) ?? '', m.mk ? 'yes' : '', m.ve ? 'yes' : ''];
+        if (a.kind === 'p') out.push([rowsOf[t][0].date, t, m.part, m.f, m.t, a.p.n, 'player', a.p.pos, m.ot ?? '', a.p.ovr ?? '', a.p.pot || '', a.p.pot ? MOT[a.p.mot ?? 0] : '', m.at ?? '', a.p.con, a.p.x === 'ret' ? 'Retired' : a.p.x === 'fa' ? 'FA' : a.p.org, ...vals]);
+        else out.push([rowsOf[t][0].date, t, m.part, m.f, m.t, pickName(a.k) + (a.d ? ', used on ' + a.d.n : ''), a.d ? 'pick, used' : 'pick', a.d ? a.d.pos : '', '', a.d ? a.d.ovr ?? '' : '', a.d ? a.d.pot || '' : '', a.d && a.d.pot ? MOT[a.d.mot ?? 0] : '', '', '', a.d ? (a.d.x === 'fa' ? 'FA' : a.d.org) : a.k.own, ...vals]);
       }
     }
     $('dl-assets').href = csvUrl(out); $('dl-assets-wrap').hidden = false;
