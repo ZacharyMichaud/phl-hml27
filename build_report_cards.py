@@ -1,27 +1,22 @@
 #!/usr/bin/env python3
-"""Build the HLM27 GM report cards site from HLM27_GM_Report_Cards.xlsx (and the league save).
+"""Build the HLM27 GM report cards site straight from the official league saves.
 
 Usage:
-    python3 build_report_cards.py HLM27_GM_Report_Cards.xlsx [index.html] --save LATEST_SAVE.zip \
-        [--history OLDER_SAVE.zip ...]
+    python build_report_cards.py [--saves ../saves] [index.html]
 
 Writes index.html (a small loader that never changes) and report.html (the page)
 next to it; commit report.html after each update.
 
-Reads the "Entries and Exits" sheet (one row per team per trade), the grade
-cutoffs and sample-size limits on the "Method" sheet, and the team names from
-the per-team tabs. Everything else (grades, ranks, chart) is computed in the
-page itself, so replacing the workbook and re-running is the whole update.
-
---save (the league save zip, its unzipped folder, or its dynamic/d0.hlm) adds
-the trade cards: every asset in every trade with position, overall, age,
-contract and its value in that save, and each player's overall at the trade
-and now. --history adds older saves (the season-opening one, say) so players
-who have since retired still get an overall at the trade. Without --save the
-page still builds, and the cards list the assets without values.
+Reads every save in --saves (zips of the game's Save folder, named by game date).
+The ledger, one row per team per trade, comes from the saves' trade histories: a
+save's history resets at the season rollover, so the trades are the union across
+all saves, plus the ones the daily trade recap mails still hold. Grades, ranks and
+the chart are computed in the page itself. The latest save gives today's ratings,
+contracts and values; the older saves give each player's overall on the trade day.
 """
 import argparse
 import datetime
+import glob
 import gzip
 import json
 import os
@@ -29,44 +24,24 @@ import re
 import zipfile
 from collections import defaultdict
 
-from openpyxl import load_workbook
-
 ap = argparse.ArgumentParser(description="Build the HLM27 GM report cards page.")
-ap.add_argument("workbook", nargs="?", default="HLM27_GM_Report_Cards.xlsx")
 ap.add_argument("out", nargs="?", default="index.html", help="loader file to write; report.html goes next to it")
-ap.add_argument("--save", help="league save (.zip, unzipped folder, or dynamic/d0.hlm) for the trade cards")
-ap.add_argument("--history", action="append", default=[], metavar="SAVE",
-                help="an older league save (repeatable): gives each player's overall at the time of his trades")
+ap.add_argument("--saves", default=os.path.join("..", "saves"), help="folder of league save zips (default ../saves)")
 args = ap.parse_args()
+out = args.out
 
-src, out = args.workbook, args.out
-wb = load_workbook(src, data_only=True)
-
-cols = ["date", "trade", "team", "partner", "entries", "exits", "players_in", "players_out",
-        "picks_in", "picks_out", "value_in", "value_out", "net", "result", "note"]
-ledger = []
-for r in wb["Entries and Exits"].iter_rows(min_row=2, values_only=True):
-    if r[0] is None:
-        continue
-    d = dict(zip(cols, r))
-    d["trade"] = str(d["trade"])
-    d["note"] = d["note"] or ""
-    ledger.append(d)
-
-cutoffs, limits = [], {}
-for r in wb["Method"].iter_rows(values_only=True):
-    if isinstance(r[0], (int, float)) and isinstance(r[1], str):
-        cutoffs.append({"min_edge": r[0], "grade": r[1]})
-    elif isinstance(r[0], str) and isinstance(r[1], int):
-        limits[r[0]] = r[1]
-min_trades = limits.get("Minimum trades for any grade", 3)
-full_trades = limits.get("Trades for a full (no asterisk) grade", 8)
-
-teams = []
-for ws in wb.worksheets:
-    m = re.match(r"(.+) \((\w{3})\)", str(ws["A1"].value or ""))
-    if m and ws.title == m.group(2):
-        teams.append({"team": m.group(2), "name": m.group(1), "gm": ""})
+TEAM_NAMES = {"ANA": "Anaheim", "BOS": "Boston", "BUF": "Buffalo", "CAR": "Carolina", "CBJ": "Columbus", "CGY": "Calgary",
+              "CHI": "Chicago", "COL": "Colorado", "DAL": "Dallas", "DET": "Detroit", "EDM": "Edmonton", "FLA": "Florida",
+              "LAK": "Los Angeles", "MIN": "Minnesota", "MTL": "Montreal", "NJD": "New Jersey", "NSH": "Nashville",
+              "NYI": "NY Islanders", "NYR": "NY Rangers", "OTT": "Ottawa", "PHI": "Philadelphia", "PIT": "Pittsburgh",
+              "SEA": "Seattle", "SJS": "San Jose", "STL": "St. Louis", "TBL": "Tampa Bay", "TOR": "Toronto", "UTA": "Utah",
+              "VAN": "Vancouver", "VGK": "Vegas", "WPG": "Winnipeg", "WSH": "Washington"}
+# Grade cutoffs (minimum Edge) and sample-size limits, decided with Zachary.
+CUTOFFS = [(-9.99, "F"), (-0.10, "D-"), (-0.085, "D"), (-0.065, "D+"), (-0.04, "C-"), (-0.02, "C"), (0, "C+"),
+           (0.02, "B-"), (0.04, "B"), (0.07, "B+"), (0.10, "A-"), (0.15, "A"), (0.25, "A+")]
+MIN_TRADES, FULL_TRADES = 3, 8
+cutoffs = [{"min_edge": m, "grade": g} for m, g in CUTOFFS]
+min_trades, full_trades = MIN_TRADES, FULL_TRADES
 
 # The game caps a trade at 5 assets per side, so a bigger deal gets entered as
 # several trades on the same day between the same two teams. Those are combined
@@ -74,105 +49,72 @@ for ws in wb.worksheets:
 # KEEP_SEPARATE lists groups to leave split anyway (by any one of their trade ids);
 # EXTRA_MERGES lists other groups to combine, as tuples of trade ids.
 ASSET_CAP = 5
-KEEP_SEPARATE = {"3837", "3972", "4041", "D#4"}  # Pulock (MTL-NYI), Nylander (OTT-TOR), Kuznetsov (CGY-NJD), CAR-SEA Discord D#4/D#7: separate deals
-EXTRA_MERGES = []
-
-by_trade = defaultdict(list)
-for d in ledger:
-    by_trade[d["trade"]].append(d)
-groups = defaultdict(list)
-for tid, rs in by_trade.items():
-    groups[(rs[0]["date"], frozenset(x["team"] for x in rs))].append(tid)
-merge_sets = []
-for tids in groups.values():
-    if len(tids) < 2 or any(t in KEEP_SEPARATE for t in tids):
-        continue
-    if any(d["players_in"] + d["picks_in"] >= ASSET_CAP for t in tids for d in by_trade[t]):
-        merge_sets.append(tids)
-merge_sets += [list(m) for m in EXTRA_MERGES]
-
-def _num(t):
-    return (0, int(t)) if t.isdigit() else (1, int(t.lstrip("D#")))
-
-merged_ids = set()
-combined = []
-for tids in merge_sets:
-    tids = sorted(tids, key=_num)
-    merged_ids.update(tids)
-    new_id = "+".join(tids)
-    for team in sorted({d["team"] for t in tids for d in by_trade[t]}):
-        parts = [d for t in tids for d in by_trade[t] if d["team"] == team]
-        join = lambda k: "; ".join(p[k] for p in parts if p[k] and p[k] != "—") or "—"
-        notes = [p["note"] for p in parts if p["note"]]
-        row = {
-            "date": parts[0]["date"], "trade": new_id, "team": team, "partner": parts[0]["partner"],
-            "entries": join("entries"), "exits": join("exits"),
-            **{k: sum(p[k] for p in parts) for k in ("players_in", "players_out", "picks_in", "picks_out", "value_in", "value_out")},
-            "note": "; ".join([f"Combined from {len(tids)} trades entered the same day (the game allows {ASSET_CAP} assets per side)"] + notes),
-        }
-        row["net"] = row["value_in"] - row["value_out"]
-        combined.append(row)
-ledger = [d for d in ledger if d["trade"] not in merged_ids] + combined
-ledger.sort(key=lambda d: (d["date"], _num(d["trade"].split("+")[0]), d["team"]))
-print("combined", len(merge_sets), "split deals:", ", ".join("+".join(sorted(m, key=_num)) for m in merge_sets))
-
+# Pulock (MTL-NYI), Nylander (OTT-TOR), Kuznetsov (CGY-NJD, July 1 2027), Meyers (CAR-SEA, July 1 2027): separate deals
+KEEP_SEPARATE = {"3837", "3972", "4049", "4042"}
+# Calgary's Oct 6, 2027 deals, each entered as several trades with a 7th-round pick passed back and forth.
+EXTRA_MERGES = [("4098", "4099"), ("4100", "4101", "4102", "4103")]
+# Three-team trades (BUF retaining salary): value in / value out per team, split per asset by estimate.
+THREE_TEAM = {"3931": {"BUF": (455, 0), "OTT": (170, 764), "TOR": (553, 414)},
+              "3942": {"BUF": (203, 34), "DET": (561, 879), "OTT": (913, 764)},
+              "3991": {"BUF": (507, 0), "CHI": (1998, 2386), "NYI": (2386, 2505)}}
 # A trade counts as Even when its balance, net value / total value moved, is
 # within this band either way: close enough that both sides' AI GMs would take it.
 EVEN_BAND = 0.10
-for d in ledger:
-    vin, vout = d["value_in"], d["value_out"]
-    moved = abs(vin) + abs(vout)
-    bal = (vin - vout) / moved if moved else 0.0
-    d["result"] = "Even" if abs(bal) < EVEN_BAND else ("Win" if vin > vout else "Loss")
-
 # GM names: fill this in once and they show on the cards.
 GM_NAMES = {}
-for t in teams:
-    t["gm"] = GM_NAMES.get(t["team"], "")
 
-
-# ---- Trade cards: every asset, from the league save ----------------------------
-# The save records one value per side at the moment of a trade (ValueOutSum), not
-# per asset. Each asset's value here is its value in the latest save; the page shows
-# it beside the side's recorded value at the trade. In the recorded values the game
-# adds 5% to the players sent by every participant after the first (the league's
-# trade difficulty, 1.05), so those players are flagged to carry the same 5% today.
+# In the recorded values the game adds 5% to the players sent by every participant
+# after the first (the league's trade difficulty, 1.05), so those players are flagged
+# to carry the same 5% today.
 #
 # Overall at the trade: ratings only move on the 2nd of each month (Nov to Mar),
 # reported in each team's progression mail with the new overall, plus the odd point
-# from completed training. Those mails sit in every save, so the overall on any date
-# is the nearest earlier save's overall plus the changes reported up to that date.
-# On a tick day the tick lands before that day's trades.
+# from completed training and the season rollover. Those mails sit in every save, so
+# the overall on any date is the nearest earlier save's overall plus the changes
+# reported up to that date. On a tick day the tick lands before that day's trades.
 TRADE_MARKUP_FROM_PARTICIPANT = 1
 POSITIONS = {0: "LW", 1: "C", 2: "RW", 3: "LD", 4: "RD", 5: "G"}
 JUNIOR, COLLEGE = {"2", "3", "4"}, {"5", "6", "7", "8", "9", "10"}
-# Overall = offence/defence blend by player type (goalies: their one rating), halves to
-# even. Matches the game's own overall in its progression mails for 98% of players.
-OVR_WEIGHTS = {("F", 1): 0.70, ("F", 2): 0.70, ("F", 7): 0.60, ("F", 0): 0.30, ("F", 3): 0.35,
-               ("D", 4): 0.50, ("D", 5): 0.65, ("D", 6): 0.25}
+# Overall = offence/defence blend by player type (goalies: their one rating), halves to even.
+OVR_WEIGHTS = {("F", 1): 70, ("F", 2): 70, ("F", 7): 60, ("F", 0): 30, ("F", 3): 35,
+               ("D", 4): 50, ("D", 5): 65, ("D", 6): 25}
 # Potential tiers (save's _Potential, 0 = best) and the badge colour, which the game
 # sets from motivation (_Motivation; 5 = potential reached, shown grey).
 POTENTIAL = {"F": ["Franchise", "Elite", "Top 6 F", "Top 9 F", "4th line", "Depth", "Minor", "Semipro", "Amateur"],
              "D": ["Franchise", "Elite", "Top 4 D", "Top 6 D", "7th D", "Depth", "Minor", "Semipro", "Amateur"],
              "G": ["Franchise", "Elite", "Starter", "Mid Starter", "Backup", "Depth", "Minor", "Semipro", "Amateur"]}
-MOTIVATION = ["Absolute", "High", "Medium", "Low", "Poor", "Reached"]
-ITEM_RE = re.compile(r"^(?P<name>.+?)(?: \((?P<ovr>\d+), (?P<age>\d+)\))?(?: \[sender keeps (?P<ret>\d+)% of salary\])?$")
-PICK_RE = re.compile(r"^(?P<y>\d{4}) R(?P<r>\d) \((?P<o>[A-Z]{2,3})\)$")
+PLAYER_KEYS = ("$type", "FirstName", "LastName", "Positions", "_PlayerType", "BaseOffense", "BaseDefense", "Birthday",
+               "TeamIds", "_ContractStatus", "Values", "_Potential", "_Motivation", "Drafted")
+MAIL_TYPES = ("ProgressionMailArgs", "TrainingCompletedMailArgs", "DailyTradeRecapMailArgs")
 
 
 def read_save(path):
-    """The save's live state: dynamic/d0.hlm (gzip JSON), not the autosave copy under auto/."""
-    if os.path.isdir(path):
-        hits = [os.path.join(dp, "d0.hlm") for dp, _, fs in os.walk(path)
-                if "d0.hlm" in fs and os.path.basename(dp) == "dynamic" and "auto" not in dp.split(os.sep)]
-        raw = open(min(hits, key=len), "rb").read()
-    elif zipfile.is_zipfile(path):
-        with zipfile.ZipFile(path) as z:
-            hits = [n for n in z.namelist() if n.endswith("dynamic/d0.hlm") and "/auto/" not in "/" + n]
-            raw = z.read(min(hits, key=len))
-    else:
-        raw = open(path, "rb").read()
-    return json.loads(gzip.decompress(raw) if raw[:2] == b"\x1f\x8b" else raw)
+    """The parts of a save the build needs, from its live state: dynamic/d0.hlm (gzip JSON), not the autosave under auto/."""
+    with zipfile.ZipFile(path) as z:
+        hits = [n for n in z.namelist() if n.endswith("dynamic/d0.hlm") and "/auto/" not in "/" + n]
+        raw = z.read(min(hits, key=len))
+    j = json.loads(gzip.decompress(raw) if raw[:2] == b"\x1f\x8b" else raw)
+    sl = j["SportLeague"]
+    lg = sl["Leagues"]["0"]
+    players = {}
+    for pid, p in sl["PlayerList"].items():
+        q = {k: p[k] for k in PLAYER_KEYS if k in p}
+        c = p.get("Contract")
+        if c:
+            q["Contract"] = {k: c[k] for k in ("LeagueId", "Salaries", "Length") if k in c}
+        players[pid] = q
+    return {
+        "day": sl["LastSaveDay"][:10],
+        "code": {int(k): t["ShortCity"] for k, t in lg["TeamList"].items()},
+        "leagues": {str(k): v.get("Abbreviation") or "" for k, v in sl["Leagues"].items()},
+        "picks": [{k: p.get(k) for k in ("Year", "Round", "Original", "Owner", "_Value")} for p in lg["PickList"]],
+        "players": players,
+        # salary a team kept on a player it traded: (team id, player id, trade day, yearly amount)
+        "dead": [(int(k), str(c.get("PlayerId")), (c.get("DaySigned") or "")[:10], (c.get("Salaries") or [0])[min(c.get("SeasonPassed") or 0, len(c.get("Salaries") or [0]) - 1)])
+                 for k, t in lg["TeamList"].items() for c in t.get("DeadCapSpace") or [] if c.get("IsRetainedContract")],
+        "mails": [m for m in sl.get("Mails") or [] if (m.get("Args") or {}).get("$type") in MAIL_TYPES],
+        "trades": [t for t in j.get("TradeHistory") or [] if not t.get("GeneratedByAI")],
+    }
 
 
 def money(x):
@@ -192,38 +134,205 @@ def overall(p):
     g = pos_group(p)
     if g == "G":
         return round(p.get("BaseDefense", 0))
-    w = OVR_WEIGHTS.get((g, p.get("_PlayerType") or 0), 0.5)
-    return round(w * p.get("BaseOffense", 0) + (1 - w) * p.get("BaseDefense", 0))
+    w = OVR_WEIGHTS.get((g, p.get("_PlayerType") or 0), 50)
+    return round((w * p.get("BaseOffense", 0) + (100 - w) * p.get("BaseDefense", 0)) / 100)
 
 
-def ledger_items(text):
-    """Entries/exits text -> [('p', name, ovr, age, ret%) | ('k', year, round, team)]."""
-    out = []
-    for it in (text or "").split("; "):
-        if not it or it == "—":
-            continue
-        m = PICK_RE.match(it)
-        if m:
-            out.append(("k", int(m["y"]), int(m["r"]), m["o"]))
-            continue
-        m = ITEM_RE.match(it)
-        out.append(("p", m["name"], int(m["ovr"]) if m["ovr"] else None,
-                    int(m["age"]) if m["age"] else None, int(m["ret"]) if m["ret"] else None))
-    return out
+def season_of(day):
+    """League year, which turns over on July 1 (contracts, free agency)."""
+    y = int(day[:4]) - (int(day[5:7]) < 7)
+    return f"{y}-{(y + 1) % 100:02d}"
 
 
-def build_cards(states, rows_by_part, deal_ids):
-    """states: every save given, latest last. Returns the card data."""
-    state = states[-1]
-    sl = state["SportLeague"]
-    lg = sl["Leagues"]["0"]
-    code = {int(k): t["ShortCity"] for k, t in lg["TeamList"].items()}
-    team_id = {c: i for i, c in code.items()}
-    leagues = {str(k): v.get("Abbreviation") or "" for k, v in sl["Leagues"].items()}
-    PL = sl["PlayerList"]
-    pick_list = {f"{p['Year']}{p['Round']:02d}{p['Original']:02d}": p for p in lg["PickList"]}
-    history = {str(t["Id"]): t for t in state.get("TradeHistory") or [] if not t.get("GeneratedByAI")}
-    save_day = datetime.date.fromisoformat(sl["LastSaveDay"][:10])
+def _num(t):
+    return int(t)
+
+
+paths = sorted(glob.glob(os.path.join(args.saves, "*.zip")))
+if not paths:
+    raise SystemExit(f"no save zips in {args.saves}")
+states = []
+for p in paths:
+    states.append(read_save(p))
+    print(f"read {os.path.basename(p)}: {states[-1]['day']}, {len(states[-1]['trades'])} trades in its history", flush=True)
+states.sort(key=lambda s: (s["day"], len(s["trades"])))
+state = states[-1]
+code = state["code"]
+PL = state["players"]
+save_day = datetime.date.fromisoformat(state["day"])
+snaps = [(s["day"], s["players"]) for s in states]
+
+# Every GM-to-GM trade: the histories of all saves, plus the trades only the recap mails still hold.
+history = {}
+for s in states:
+    for m in s["mails"]:
+        a = m.get("Args") or {}
+        if a.get("$type") == "DailyTradeRecapMailArgs":
+            for t in a.get("Trades") or []:
+                if not t.get("GeneratedByAI") and all(p["TeamId"] in code for p in t["Participants"]):
+                    history.setdefault(str(t["Id"]), t)
+for s in states:
+    for t in s["trades"]:
+        if all(p["TeamId"] in code for p in t["Participants"]):
+            history[str(t["Id"])] = t
+
+
+# Salary retained by the sender is not in the trade history; it shows up as dead cap on the sending
+# team, dated the trade day. Share kept = that amount / the player's full cap hit in the same save.
+retained = {}
+for s_ in states:
+    full = defaultdict(int)
+    for team_id, pid, day, amount in s_["dead"]:
+        full[pid] += amount
+    for team_id, pid, day, amount in s_["dead"]:
+        sal = ((s_["players"].get(pid) or {}).get("Contract") or {}).get("Salaries") or [0]
+        if (pid, day, team_id) not in retained and sal[0] + full[pid] > 0:
+            retained[(pid, day, team_id)] = round(100 * amount / (sal[0] + full[pid]))
+
+
+# A player sent twice by the same team on one day (a re-entered trade): the retention goes with the last one.
+last_sent = {}
+for tid_, t_ in history.items():
+    for p_ in t_["Participants"]:
+        for a_ in p_["PlayersId"]:
+            k_ = (str(a_["Athlete"]), t_["Date"][:10], p_["TeamId"])
+            last_sent[k_] = max(last_sent.get(k_, 0), int(tid_))
+
+
+def kept_by(p, day, tid):
+    """{player id: % of salary kept} for one trade participant: its own Contracts entries, plus dead cap from that day."""
+    k = {str(c["Item1"]): round(c["Item2"] * 100) for c in p.get("Contracts") or []}
+    for a in p["PlayersId"]:
+        key = (str(a["Athlete"]), day, p["TeamId"])
+        pct = retained.get(key) if last_sent.get(key) == int(tid) else None
+        if pct:
+            k.setdefault(str(a["Athlete"]), pct)
+    return k
+
+
+def age_on(p, day):
+    b = datetime.date(1970, 1, 1) + datetime.timedelta(days=p["Birthday"])
+    d = datetime.date.fromisoformat(day)
+    return d.year - b.year - ((d.month, d.day) < (b.month, b.day))
+
+
+def value_now(pid):
+    """The game's cached trade value: the latest save that holds one (the cache empties on some days)."""
+    for _, pl in reversed(snaps):
+        v = ((pl.get(pid) or {}).get("Values") or {}).get("0")
+        if v is not None:
+            return v
+    return None
+
+
+pick_value = {(p["Year"], p["Round"], p["Original"]): p.get("_Value") for p in state["picks"]}
+
+
+def trade_rows(tid, t):
+    """One ledger row per team: what it got and sent, with the game's recorded value of each side."""
+    ps = t["Participants"]
+    sides = [code[p["TeamId"]] for p in ps]
+    got = [[] for _ in ps]  # (text, kind, sender index, weight)
+    third = defaultdict(list)
+    for i, p in enumerate(ps):
+        sent = {str(a["Athlete"]) for a in p["PlayersId"]}
+        kept = kept_by(p, t["Date"][:10], tid)
+        for pid, pct in kept.items():
+            if pid not in sent:
+                third[i].append(pct)
+        for nm, a in zip(p["PlayersName"], p["PlayersId"]):
+            pid = str(a["Athlete"])
+            q = PL.get(pid)
+            text = nm + (f" ({overall(q)}, {age_on(q, state['day'])})" if q else "")
+            if pid in kept:
+                text += f" [sender keeps {kept[pid]}% of salary]"
+            w = abs(value_now(pid) or 0) * (1.05 if i >= TRADE_MARKUP_FROM_PARTICIPANT else 1)
+            got[a.get("TeamIndex", 0)].append((text, "p", i, w))
+        for k in p["PicksId"]:
+            orig = int(k["OriginalTeam"])
+            text = f"{k['Year']} R{k['Round']} ({code.get(orig, orig)})"
+            w = abs(pick_value.get((int(k["Year"]), int(k["Round"]), orig)) or 0)
+            got[k.get("TeamId", 0)].append((text, "k", i, w))
+    rows = []
+    for i, team in enumerate(sides):
+        ins = got[i]
+        outs = [x for j, g in enumerate(got) if j != i for x in g if x[2] == i]
+        if len(ps) == 2:
+            vin, vout, note = ps[1 - i].get("ValueOutSum") or 0, ps[i].get("ValueOutSum") or 0, ""
+            partner = sides[1 - i]
+        else:
+            note = "3-team trade: values split per asset (estimate)"
+            if tid in THREE_TEAM:
+                vin, vout = THREE_TEAM[tid][team]
+            else:  # split each sender's recorded value across what it sent, by today's values
+                vout, vin = ps[i].get("ValueOutSum") or 0, 0
+                for j, p in enumerate(ps):
+                    allw = sum(x[3] for g in got for x in g if x[2] == j) or 1
+                    vin += round((p.get("ValueOutSum") or 0) * sum(x[3] for x in ins if x[2] == j) / allw) if j != i else 0
+            if third[i]:
+                note += "; " + "; ".join(f"retains {pct}% of a salary" for pct in third[i])
+            senders = list(dict.fromkeys(sides[x[2]] for x in ins))
+            partner = ", ".join(senders + [s for s in sides if s != team and s not in senders])
+        rows.append({
+            "date": t["Date"][:10], "season": season_of(t["Date"][:10]), "trade": tid, "team": team, "partner": partner,
+            "entries": "; ".join(x[0] for x in ins) or "—", "exits": "; ".join(x[0] for x in outs) or "—",
+            "players_in": sum(x[1] == "p" for x in ins), "players_out": sum(x[1] == "p" for x in outs),
+            "picks_in": sum(x[1] == "k" for x in ins), "picks_out": sum(x[1] == "k" for x in outs),
+            "value_in": vin, "value_out": vout, "net": vin - vout, "result": "", "note": note,
+        })
+    return rows
+
+
+ledger = [r for tid in sorted(history, key=_num) for r in trade_rows(tid, history[tid])]
+teams = [{"team": c, "name": TEAM_NAMES.get(c, c), "gm": GM_NAMES.get(c, "")} for c in sorted(code.values())]
+
+by_trade = defaultdict(list)
+for d in ledger:
+    by_trade[d["trade"]].append(d)
+groups = defaultdict(list)
+for tid, rs in by_trade.items():
+    groups[(rs[0]["date"], frozenset(x["team"] for x in rs))].append(tid)
+merge_sets = []
+for tids in groups.values():
+    if len(tids) < 2 or any(t in KEEP_SEPARATE for t in tids):
+        continue
+    if any(d["players_in"] + d["picks_in"] >= ASSET_CAP for t in tids for d in by_trade[t]):
+        merge_sets.append(tids)
+merge_sets += [list(m) for m in EXTRA_MERGES if all(t in by_trade for t in m)]
+
+merged_ids = set()
+combined = []
+for tids in merge_sets:
+    tids = sorted(tids, key=_num)
+    merged_ids.update(tids)
+    new_id = "+".join(tids)
+    for team in sorted({d["team"] for t in tids for d in by_trade[t]}):
+        parts = [d for t in tids for d in by_trade[t] if d["team"] == team]
+        join = lambda k: "; ".join(p[k] for p in parts if p[k] and p[k] != "—") or "—"
+        notes = [p["note"] for p in parts if p["note"]]
+        row = {
+            "date": parts[0]["date"], "season": parts[0]["season"], "trade": new_id, "team": team, "partner": parts[0]["partner"],
+            "entries": join("entries"), "exits": join("exits"),
+            **{k: sum(p[k] for p in parts) for k in ("players_in", "players_out", "picks_in", "picks_out", "value_in", "value_out")},
+            "note": "; ".join([f"Combined from {len(tids)} trades entered the same day (the game allows {ASSET_CAP} assets per side)"] + notes),
+        }
+        row["net"] = row["value_in"] - row["value_out"]
+        combined.append(row)
+ledger = [d for d in ledger if d["trade"] not in merged_ids] + combined
+ledger.sort(key=lambda d: (d["date"], _num(d["trade"].split("+")[0]), d["team"]))
+print("combined", len(merge_sets), "split deals:", ", ".join("+".join(sorted(m, key=_num)) for m in merge_sets))
+
+for d in ledger:
+    vin, vout = d["value_in"], d["value_out"]
+    moved = abs(vin) + abs(vout)
+    bal = (vin - vout) / moved if moved else 0.0
+    d["result"] = "Even" if abs(bal) < EVEN_BAND else ("Win" if vin > vout else "Loss")
+
+
+# ---- Trade cards: every asset, from the league saves ----------------------------
+def build_cards(deal_ids):
+    team_leagues = state["leagues"]
+    pick_list = {f"{p['Year']}{p['Round']:02d}{p['Original']:02d}": p for p in state["picks"]}
     season0 = save_day.year if save_day.month >= 7 else save_day.year - 1
     per_round = len(code)
     drafted = {}
@@ -231,15 +340,11 @@ def build_cards(states, rows_by_part, deal_ids):
         for d in p.get("Drafted") or []:
             if "League" not in d and str(d.get("PickId", "-1")) not in ("-1", ""):
                 drafted[str(d["PickId"])] = (pid, (d["Round"] - 1) * per_round + d["Pick"])
-    short_ids = defaultdict(list)
-    for pid, p in PL.items():
-        short_ids[f"{(p.get('FirstName') or '')[:1]}. {p.get('LastName') or ''}"].append(pid)
 
     # Rating history: one snapshot per save, plus the dated changes from every save's mails.
-    snaps = [(s["SportLeague"]["LastSaveDay"][:10], s["SportLeague"]["PlayerList"]) for s in states]
     ticks, trained, seen_mail = defaultdict(list), defaultdict(list), set()
     for s in states:
-        for m in s["SportLeague"].get("Mails") or []:
+        for m in s["mails"]:
             if m.get("Id") in seen_mail:
                 continue
             seen_mail.add(m.get("Id"))
@@ -270,16 +375,11 @@ def build_cards(states, rows_by_part, deal_ids):
                 v += rest
         return v
 
-    def age_on(p, day):
-        b = datetime.date(1970, 1, 1) + datetime.timedelta(days=p["Birthday"])
-        d = datetime.date.fromisoformat(day)
-        return d.year - b.year - ((d.month, d.day) < (b.month, b.day))
-
     def contract(p):
         con = p.get("Contract") or {}
         lid = con.get("LeagueId")
         if lid is not None and str(lid) != "0":
-            ab = leagues.get(str(lid), "")
+            ab = team_leagues.get(str(lid), "")
             return f"College ({ab})" if str(lid) in COLLEGE else f"Junior ({ab})" if str(lid) in JUNIOR else f"{ab} contract"
         sal = con.get("Salaries") or []
         if p.get("_ContractStatus") == 2:
@@ -289,7 +389,7 @@ def build_cards(states, rows_by_part, deal_ids):
             return f"{money(sal[0])} through {last}-{(last + 1) % 100:02d}"
         return "Unsigned draft pick" if p.get("_ContractStatus") == 3 else "Unsigned"
 
-    people, picks, unresolved = {}, {}, []
+    people, picks = {}, {}
 
     def person(pid, short=None):
         e = people.get(pid)
@@ -309,7 +409,7 @@ def build_cards(states, rows_by_part, deal_ids):
                     e["x"] = "ret"
                 else:
                     org_id = (p.get("TeamIds") or {}).get("0")
-                    e.update({"age": age_on(p, save_day.isoformat()), "ovr": overall(p), "v": (p.get("Values") or {}).get("0")})
+                    e.update({"age": age_on(p, state["day"]), "ovr": overall(p), "v": value_now(pid)})
                     if org_id in code:
                         e["org"], e["con"] = code[org_id], contract(p)
                     else:
@@ -342,15 +442,15 @@ def build_cards(states, rows_by_part, deal_ids):
         sides = [code.get(p["TeamId"], str(p["TeamId"])) for p in ps]
         moves, holds = [], []
         for i, p in enumerate(ps):
+            kept = kept_by(p, day, tid)
             for nm, a in zip(p["PlayersName"], p["PlayersId"]):
                 pid, to = str(a["Athlete"]), sides[a.get("TeamIndex", 0)]
                 person(pid, nm)
                 m = {"a": "p:" + pid, "f": sides[i], "t": to, "part": tid, "s": nm}
                 if i >= TRADE_MARKUP_FROM_PARTICIPANT:
                     m["mk"] = 1
-                ret = ret_of.get((tid, to, nm))
-                if ret:
-                    m["ret"] = ret
+                if pid in kept:
+                    m["ret"] = kept[pid]
                 then(m, pid, day)
                 moves.append(m)
             for k in p["PicksId"]:
@@ -361,110 +461,30 @@ def build_cards(states, rows_by_part, deal_ids):
                 holds.append({"team": sides[i], "p": str(c["Item1"]), "pct": round(c["Item2"] * 100), "part": tid})
         return moves, holds
 
-    def from_ledger(tid):
-        """Trades not in the save (posted in Discord after it): match names against the save,
-        valued the way the ledger estimated them (players plus 5%, picks as is)."""
-        moves = []
-        for r in rows_by_part[tid]:
-            senders = [s.strip() for s in str(r["partner"]).split(",")]
-            for it in ledger_items(r["entries"]):
-                sender = senders[0]
-                if it[0] == "k":
-                    kid = f"{it[1]}{it[2]:02d}{team_id.get(it[3], 0):02d}"
-                    moves.append({"a": pick(kid, it[1], it[2], it[3]), "f": sender, "t": r["team"], "part": tid})
-                    continue
-                _, name, ovr, age, ret = it
-                cands = [pid for pid in short_ids.get(name, [])
-                         if code.get((PL[pid].get("TeamIds") or {}).get("0")) in senders]
-                if len(cands) > 1 and age:
-                    cands = [pid for pid in cands if age_on(PL[pid], save_day.isoformat()) == age]
-                m = {"f": sender, "t": r["team"], "part": tid, "mk": 1, "s": name}
-                if len(cands) == 1:
-                    pid = cands[0]
-                    person(pid, name)
-                    m["f"] = code[(PL[pid].get("TeamIds") or {}).get("0")]
-                    then(m, pid, str(r["date"])[:10])
-                else:
-                    unresolved.append(f"{tid} {name}")
-                    pid = "x:" + name
-                    people.setdefault(pid, {"n": name, "age": age, "ovr": ovr})
-                m["a"] = "p:" + pid
-                if ret:
-                    m["ret"] = ret
-                moves.append(m)
-        return moves
-
-    # Salary retention as the ledger shows it, keyed by (trade part, receiving team, short name).
-    ret_of = {}
-    for tid, rows in rows_by_part.items():
-        for r in rows:
-            for it in ledger_items(r["entries"]):
-                if it[0] == "p" and it[4]:
-                    ret_of[(tid, r["team"], it[1])] = it[4]
-
     deals = {}
     for tid in deal_ids:
         moves, holds, parts = [], [], []
         for p in tid.split("+"):
-            if p in history:
-                mv, hd = from_history(p)
-                moves += mv
-                holds += hd
-                parts.append({"id": p})
-            elif p in rows_by_part:
-                moves += from_ledger(p)
-                parts.append({"id": p, "est": 1})
+            mv, hd = from_history(p)
+            moves += mv
+            holds += hd
+            parts.append({"id": p})
         deals[tid] = {"parts": parts, "moves": moves}
         if holds:
             deals[tid]["holds"] = holds
-    return {"date": save_day.isoformat()}, people, picks, deals, unresolved
+    return people, picks, deals
 
 
-def fix_overalls(ledger, deals, people):
-    """Rewrite each '(OVR, age)' in the ledger text with the latest save's numbers, so the
-    tables and the cards agree. Returns how many changed."""
-    changed = 0
-    for row in ledger:
-        deal = deals.get(row["trade"])
-        if not deal:
-            continue
-        for key, side in (("entries", "t"), ("exits", "f")):
-            ids = defaultdict(set)
-            for m in deal["moves"]:
-                if m["a"].startswith("p:") and m[side] == row["team"] and m.get("s"):
-                    ids[m["s"]].add(m["a"][2:])
-            out = []
-            for it in (row[key] or "").split("; "):
-                m = ITEM_RE.match(it) if it and it != "—" and not PICK_RE.match(it) else None
-                pid = next(iter(ids[m["name"]])) if m and m["ovr"] and len(ids.get(m["name"], ())) == 1 else None
-                e = people.get(pid) if pid else None
-                if e and e.get("ovr") is not None and e.get("age") is not None:
-                    new = f"{m['name']} ({e['ovr']}, {e['age']})" + (f" [sender keeps {m['ret']}% of salary]" if m["ret"] else "")
-                    changed += new != it
-                    it = new
-                out.append(it)
-            row[key] = "; ".join(out)
-    return changed
-
-
-save_info, people, pick_info, deals = None, {}, {}, {}
-if args.save:
-    states = sorted([read_save(p) for p in args.history] + [read_save(args.save)],
-                    key=lambda s: s["SportLeague"]["LastSaveDay"])
-    deal_ids = sorted({d["trade"] for d in ledger}, key=lambda t: _num(t.split("+")[0]))
-    save_info, people, pick_info, deals, unresolved = build_cards(states, by_trade, deal_ids)
-    n_fixed = fix_overalls(ledger, deals, people)
-    n_assets = sum(len(d["moves"]) for d in deals.values())
-    print(f"trade cards: {len(deals)} deals, {n_assets} assets, values as of {save_info['date']}, "
-          f"rating history from {len(states)} save(s); {n_fixed} overalls in the ledger text updated"
-          + (f"; not found in the save: {', '.join(unresolved)}" if unresolved else ""))
-else:
-    print("no --save given: the trade cards will list assets without values")
+deal_ids = sorted({d["trade"] for d in ledger}, key=lambda t: _num(t.split("+")[0]))
+people, pick_info, deals = build_cards(deal_ids)
+save_info = {"date": state["day"]}
+print(f"trade cards: {len(deals)} deals, {sum(len(d['moves']) for d in deals.values())} assets, "
+      f"today's numbers from the {state['day']} save, rating history from {len(states)} saves")
 
 data = {
     "ledger": ledger, "cutoffs": cutoffs, "teams": teams,
     "minTrades": min_trades, "fullTrades": full_trades, "evenBand": EVEN_BAND,
-    "asOf": max(r["date"] for r in ledger),
+    "asOf": state["day"],
     "built": datetime.date.today().isoformat(),
     "save": save_info, "people": people, "picks": pick_info, "deals": deals,
 }
@@ -503,6 +523,8 @@ TEMPLATE = r"""<!doctype html>
   .lede { color: var(--ink-soft); font-size: 16px; }
   .meta { color: var(--ink-soft); font-size: 13px; margin-top: 6px; }
   .meta a { color: inherit; }
+  .season { margin-top: 12px; font-size: 14px; }
+  .season select { font: inherit; color: var(--ink); background: var(--paper); border: 1px solid var(--line-strong); border-radius: 4px; padding: 6px 10px; margin-left: 6px; }
   section { margin-top: 40px; }
   .head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; padding-bottom: 10px; border-bottom: 2px solid var(--ink); margin-bottom: 12px; }
   .note { color: var(--ink-soft); font-size: 13px; }
@@ -622,8 +644,9 @@ TEMPLATE = r"""<!doctype html>
 <div class="wrap">
   <header>
     <h1>HLM27 GM report cards</h1>
-    <p class="lede">Every GM graded on the trade value they took in versus sent out, across <b id="n-trades"></b> GM-to-GM trades from <b id="d-first"></b> to <b id="d-last"></b>. Click a team to see every entry and exit, and any trade to see what each asset is worth.</p>
+    <p class="lede">Every GM graded on the trade value they took in versus sent out, across <b id="n-trades"></b> GM-to-GM trades<span id="range"> from <b id="d-first"></b> to <b id="d-last"></b></span>. Click a team to see every entry and exit, and any trade to see what each asset is worth.</p>
     <p class="meta">Through the league save of <span id="as-of"></span>. Updated <span id="built"></span>. <a id="dl" href="#" download="hlm27_trade_ledger.csv">Download the full ledger (CSV)</a><span id="dl-assets-wrap" hidden> or <a id="dl-assets" href="#" download="hlm27_trade_assets.csv">every asset traded (CSV)</a></span>.</p>
+    <p class="season"><label for="season">Season</label> <select id="season"></select></p>
   </header>
 
   <section id="cards">
@@ -704,11 +727,11 @@ TEMPLATE = r"""<!doctype html>
 
   <section id="method" class="method">
     <div class="head"><h2>How the grades work</h2></div>
-    <p><b>Source.</b> The league save's trade history (every GM-to-GM trade since the season opened), plus trades posted in Discord after the latest save, numbered D#n. AI trades in the game's other leagues are left out.</p>
-    <p><b>Value.</b> The game's own trade valuation of each side at the time of the deal, as the save records it. Value in is what a team received; value out is what it sent. A trade is a Win or a Loss for a team only when the gap is more than <b id="m-band"></b> of the value moved; inside that band it is Even, a deal both sides' AI GMs would accept. Even trades count as neither a win nor a loss, but their value still counts toward Edge. For Discord-posted trades the save has no recorded value, so picks use the save's pick values and players use the save's player values plus 5%, which is how the game's recorded values ran across recent trades.</p>
+    <p><b>Source.</b> The official league saves' trade histories: every GM-to-GM trade since the league opened in September 2026. AI trades in the game's other leagues are left out. A season runs from July 1 to June 30, the league year; pick one at the top of the page to grade it alone.</p>
+    <p><b>Value.</b> The game's own trade valuation of each side at the time of the deal, as the save records it. Value in is what a team received; value out is what it sent. A trade is a Win or a Loss for a team only when the gap is more than <b id="m-band"></b> of the value moved; inside that band it is Even, a deal both sides' AI GMs would accept. Even trades count as neither a win nor a loss, but their value still counts toward Edge.</p>
     <p><b>Edge.</b> (value in − value out) ÷ (value in + value out): value won as a share of value moved, so a busy GM and a quiet one compare fairly. The grade comes from Edge using the cutoffs below. A team needs at least <b id="m-min"></b> trades for a grade (fewer shows INC) and <b id="m-full"></b> for a full grade; in between, the grade carries an asterisk.</p>
     <p><b>Combined trades.</b> The game allows at most 5 assets per side in one trade, so bigger deals get entered as several trades on the same day between the same two teams. Those are combined into one deal here and graded as a whole; their trade number joins the parts, like 3844+3845+3846.</p>
-    <p id="m-cards" hidden><b>Trade cards.</b> Click any trade, in a team's list or under Every trade, to open its card. Each player shows his overall on the day of the trade and today, with the change, his potential badge in the game's colours (set by motivation: blue Absolute, green High, orange Medium, red Low, dark red Poor, grey once reached), position, age and contract; each pick shows whom it was used on. Overalls on the trade day come from the game's monthly progression reports in the save, so they are exact. Value works per side: the game records each side's total when a trade is made, not each asset's, so each asset shows its value in the save of <span id="m-save"></span>, and each side compares its value at the trade with what the same assets are worth today. The recorded values add 5% to the players sent by one side of each trade (the league's trade difficulty, 1.05), so today's totals add the same 5% to those players. A player who has since left as a free agent or retired counts as 0, a 2027 pick counts as the player drafted with it, and a negative value means the game counts the contract as a cost.</p>
+    <p id="m-cards" hidden><b>Trade cards.</b> Click any trade to see every asset: each player's overall and potential at the trade and today, and each asset's value in the save of <span id="m-save"></span> (or the last save that holds one). A player who has since left as a free agent or retired counts as 0, and a 2027 pick counts as the player drafted with it.</p>
     <p><b>What it measures.</b> Asset value, not whether a trade helped a team win. Cap dumps, rentals and win-now veterans for young talent count as value lost. Where a team took picks to retain salary, that shows as value won, since the game does not price the cap cost. Three-team trades are split per asset by estimate. Players are shown with their overall and age as of the latest save, not at trade time.</p>
     <table class="cut"><thead><tr><th class="num">Minimum Edge</th><th>Grade</th></tr></thead><tbody id="cut-body"></tbody></table>
   </section>
@@ -744,7 +767,7 @@ TEMPLATE = r"""<!doctype html>
   const fmtLong = (s) => new Date(s + 'T00:00:00Z').toLocaleDateString('en-US', {month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC'});
   const gradeClass = (g) => 'grade g-' + (/^[A-F]/.test(g) ? g[0].toLowerCase() : 'x');
 
-  // ---- Cards, computed from the ledger (same arithmetic as the workbook) ----
+  // ---- Cards, computed from the ledger ----
   const item = /^(.+?) \((\d+), (\d+)\)(.*)$/;
   const parts = (t) => String(t || '').split('; ').filter((p) => p && p !== '—');
   const head = (text) => {
@@ -759,43 +782,52 @@ TEMPLATE = r"""<!doctype html>
     for (const p of parts(text)) { const m = item.exec(p); if (m && (!best || +m[2] > best.ovr)) best = {ovr: +m[2], desc: p}; }
     return best;
   };
-  const by = {};
-  const blank = (code, name, gm) => ({team: code, name, gm, trades: 0, wins: 0, losses: 0, evens: 0, players_in: 0, players_out: 0, picks_in: 0, picks_out: 0, value_in: 0, value_out: 0, best: null, worst: null, top_in: null, top_out: null});
-  for (const t of D.teams) by[t.team] = blank(t.team, t.name, t.gm || '');
-  for (const r of D.ledger) {
-    const t = by[r.team] || (by[r.team] = blank(r.team, r.team, ''));
-    const vin = +r.value_in, vout = +r.value_out, net = vin - vout;
-    t.trades++; if (r.result === 'Win') t.wins++; else if (r.result === 'Loss') t.losses++; else t.evens++;
-    t.players_in += +r.players_in; t.players_out += +r.players_out; t.picks_in += +r.picks_in; t.picks_out += +r.picks_out;
-    t.value_in += vin; t.value_out += vout;
-    const tag = r.date + ' vs ' + r.partner + ': got ' + head(r.entries) + ', sent ' + head(r.exits);
-    if (!t.best || net > t.best.net) t.best = {net, tag};
-    if (!t.worst || net < t.worst.net) t.worst = {net, tag};
-    const ti = top(r.entries); if (ti && (!t.top_in || ti.ovr > t.top_in.ovr)) t.top_in = {ovr: ti.ovr, text: ti.desc + ' (' + r.date + ' vs ' + r.partner + ')'};
-    const to = top(r.exits); if (to && (!t.top_out || to.ovr > t.top_out.ovr)) t.top_out = {ovr: to.ovr, text: to.desc + ' (' + r.date + ' vs ' + r.partner + ')'};
-  }
   const cuts = D.cutoffs.map((c) => ({min: +c.min_edge, grade: c.grade})).sort((a, b) => a.min - b.min);
-  const cards = Object.values(by).map((t) => {
-    const moved = t.value_in + t.value_out, edge = moved > 0 ? (t.value_in - t.value_out) / moved : null;
-    let grade = '-';
-    if (t.trades > 0 && t.trades < MIN) grade = 'INC';
-    else if (t.trades >= MIN) { let g = cuts[0].grade; for (const c of cuts) if (edge >= c.min) g = c.grade; grade = g + (t.trades < FULL ? '*' : ''); }
-    return {...t, grade, edge, rank: null, net: t.value_in - t.value_out, win_pct: t.trades ? t.wins / t.trades : null,
-      biggest_win: t.best ? t.best.tag : '', biggest_loss: t.worst ? t.worst.tag : '', top_in: t.top_in ? t.top_in.text : '', top_out: t.top_out ? t.top_out.text : ''};
-  });
-  const graded = cards.filter((r) => r.trades >= MIN);
-  for (const r of graded) r.rank = graded.filter((o) => o.edge > r.edge).length + 1;
-  cards.sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99) || b.trades - a.trades || a.team.localeCompare(b.team));
+  // The season picked at the top filters the ledger; everything below is recomputed from it.
+  const SEASONS = [...new Set(D.ledger.map((r) => r.season))].sort().reverse();
+  const seasonName = (s) => s.slice(0, 4) + '–' + s.slice(5);
+  let season = '', LED, by, cards, graded;
+  const compute = () => {
+    LED = season ? D.ledger.filter((r) => r.season === season) : D.ledger;
+    by = {};
+    const blank = (code, name, gm) => ({team: code, name, gm, trades: 0, wins: 0, losses: 0, evens: 0, players_in: 0, players_out: 0, picks_in: 0, picks_out: 0, value_in: 0, value_out: 0, best: null, worst: null, top_in: null, top_out: null});
+    for (const t of D.teams) by[t.team] = blank(t.team, t.name, t.gm || '');
+    for (const r of LED) {
+      const t = by[r.team] || (by[r.team] = blank(r.team, r.team, ''));
+      const vin = +r.value_in, vout = +r.value_out, net = vin - vout;
+      t.trades++; if (r.result === 'Win') t.wins++; else if (r.result === 'Loss') t.losses++; else t.evens++;
+      t.players_in += +r.players_in; t.players_out += +r.players_out; t.picks_in += +r.picks_in; t.picks_out += +r.picks_out;
+      t.value_in += vin; t.value_out += vout;
+      const tag = r.date + ' vs ' + r.partner + ': got ' + head(r.entries) + ', sent ' + head(r.exits);
+      if (!t.best || net > t.best.net) t.best = {net, tag};
+      if (!t.worst || net < t.worst.net) t.worst = {net, tag};
+      const ti = top(r.entries); if (ti && (!t.top_in || ti.ovr > t.top_in.ovr)) t.top_in = {ovr: ti.ovr, text: ti.desc + ' (' + r.date + ' vs ' + r.partner + ')'};
+      const to = top(r.exits); if (to && (!t.top_out || to.ovr > t.top_out.ovr)) t.top_out = {ovr: to.ovr, text: to.desc + ' (' + r.date + ' vs ' + r.partner + ')'};
+    }
+    cards = Object.values(by).map((t) => {
+      const moved = t.value_in + t.value_out, edge = moved > 0 ? (t.value_in - t.value_out) / moved : null;
+      let grade = '-';
+      if (t.trades > 0 && t.trades < MIN) grade = 'INC';
+      else if (t.trades >= MIN) { let g = cuts[0].grade; for (const c of cuts) if (edge >= c.min) g = c.grade; grade = g + (t.trades < FULL ? '*' : ''); }
+      return {...t, grade, edge, rank: null, net: t.value_in - t.value_out, win_pct: t.trades ? t.wins / t.trades : null,
+        biggest_win: t.best ? t.best.tag : '', biggest_loss: t.worst ? t.worst.tag : '', top_in: t.top_in ? t.top_in.text : '', top_out: t.top_out ? t.top_out.text : ''};
+    });
+    graded = cards.filter((r) => r.trades >= MIN);
+    for (const r of graded) r.rank = graded.filter((o) => o.edge > r.edge).length + 1;
+    cards.sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99) || b.trades - a.trades || a.team.localeCompare(b.team));
+    const ids = new Set(LED.map((r) => r.trade)), dates = LED.map((r) => r.date).sort();
+    $('n-trades').textContent = fmtInt(ids.size); $('range').hidden = !dates.length;
+    if (dates.length) { $('d-first').textContent = fmtDate(dates[0]); $('d-last').textContent = fmtDate(dates[dates.length - 1]); }
+  };
+  compute();
   const cardOf = (code) => cards.find((c) => c.team === code);
 
   // ---- Header ----
-  const ids = new Set(D.ledger.map((r) => r.trade)), dates = D.ledger.map((r) => r.date).sort();
-  $('n-trades').textContent = fmtInt(ids.size); $('d-first').textContent = fmtDate(dates[0]); $('d-last').textContent = fmtDate(dates[dates.length - 1]);
   $('as-of').textContent = fmtDate(D.asOf); $('built').textContent = fmtDate(D.built);
   $('m-min').textContent = MIN; $('m-band').textContent = Math.round(D.evenBand * 100) + '%'; $('m-full').textContent = FULL;
   const csvCell = (v) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
   const csvUrl = (rows) => URL.createObjectURL(new Blob(['\ufeff' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n')], {type: 'text/csv'}));
-  const cols = ['date', 'trade', 'team', 'partner', 'entries', 'exits', 'players_in', 'players_out', 'picks_in', 'picks_out', 'value_in', 'value_out', 'net', 'result', 'note'];
+  const cols = ['date', 'season', 'trade', 'team', 'partner', 'entries', 'exits', 'players_in', 'players_out', 'picks_in', 'picks_out', 'value_in', 'value_out', 'net', 'result', 'note'];
   $('dl').href = csvUrl([cols, ...D.ledger.map((r) => cols.map((c) => r[c]))]);
 
   // ---- State: the picked team, or an open trade, lives in the URL hash ----
@@ -885,7 +917,7 @@ TEMPLATE = r"""<!doctype html>
   // ---- Deals: one per trade number, newest first ----
   const rowsOf = {};
   for (const r of D.ledger) (rowsOf[r.trade] = rowsOf[r.trade] || []).push(r);
-  const tradeKey = (t) => { const p = t.split('+')[0]; return p.startsWith('D#') ? 1e6 + +p.slice(2) : +p; };
+  const tradeKey = (t) => +t.split('+')[0];
   const dealIds = Object.keys(rowsOf).sort((a, b) => rowsOf[b][0].date.localeCompare(rowsOf[a][0].date) || tradeKey(b) - tradeKey(a));
   const slugOf = (t) => t.split('+')[0].replace('#', '');
   const bySlug = {};
@@ -912,7 +944,7 @@ TEMPLATE = r"""<!doctype html>
     $('t-topin').textContent = r.top_in || '—'; $('t-topout').textContent = r.top_out || '—';
     $('t-empty').hidden = r.trades > 0;
     const tb = $('trades-table').tBodies[0]; tb.replaceChildren();
-    const rows = D.ledger.filter((x) => x.team === picked).sort((a, b) => b.date.localeCompare(a.date) || tradeKey(b.trade) - tradeKey(a.trade));
+    const rows = LED.filter((x) => x.team === picked).sort((a, b) => b.date.localeCompare(a.date) || tradeKey(b.trade) - tradeKey(a.trade));
     for (const x of rows) {
       const tr = document.createElement('tr'); tr.className = 'pick'; tr.tabIndex = 0; tr.dataset.trade = x.trade;
       cell(tr, fmtDate(x.date)); cell(tr, x.partner); cell(tr, x.entries, 'text'); cell(tr, x.exits, 'text');
@@ -939,8 +971,10 @@ TEMPLATE = r"""<!doctype html>
   const renderAll = () => {
     const q = fold($('q').value.trim()), words = q ? q.split(/\s+/) : [];
     const tb = $('all-table').tBodies[0]; tb.replaceChildren();
-    let shown = 0;
+    let shown = 0, total = 0;
     for (const t of dealIds) {
+      if (season && rowsOf[t][0].season !== season) continue;
+      total++;
       if (words.length && !words.every((w) => hay[t].includes(w))) continue;
       shown++;
       const rows = rowsOf[t], lead = leadRow(rows, null);
@@ -954,7 +988,7 @@ TEMPLATE = r"""<!doctype html>
       cell(tr, wins.length ? wins.map((r) => r.team + ' ' + fmtNet(r.net)).join(', ') : 'Even', wins.length ? '' : 'even');
       tb.appendChild(tr);
     }
-    $('q-count').textContent = words.length ? shown + ' of ' + dealIds.length + ' trades' : dealIds.length + ' trades';
+    $('q-count').textContent = words.length ? shown + ' of ' + total + ' trades' : total + ' trades';
   };
   $('q').addEventListener('input', renderAll);
 
@@ -969,11 +1003,12 @@ TEMPLATE = r"""<!doctype html>
     const k = K[id] || {}, d = k.dr ? P[k.dr] || {} : null;
     return {kind: 'k', k, d, v: d ? d.v ?? null : k.v ?? null};
   };
+  // The game adds 5% to the players one side sends (trade difficulty 1.05); a shown value carries it the same way.
+  const shown = (m, v) => v == null ? null : m.mk ? Math.round(v * 1.05) : v;
   const sideNow = (deal, team, dir) => {
-    let raw = 0, mk = 0;
-    for (const m of deal.moves) if ((dir === 'in' ? m.t : m.f) === team) { const v = assetOf(m).v || 0; raw += v; if (m.mk) mk += v; }
-    const now = Math.round(raw + 0.05 * mk);
-    return {raw, markup: now - raw, now};
+    let now = 0;
+    for (const m of deal.moves) if ((dir === 'in' ? m.t : m.f) === team) now += shown(m, assetOf(m).v) || 0;
+    return {now};
   };
   const callOf = (vin, vout) => {
     const mv = Math.abs(vin) + Math.abs(vout), bal = mv ? (vin - vout) / mv : 0;
@@ -1047,11 +1082,12 @@ TEMPLATE = r"""<!doctype html>
     }
     if (three) lines.unshift(el('div', 'a-meta', 'From ' + m.f));
     if (multi) nm.append(' ', el('span', 'a-part', '#' + m.part));
-    const val = el('span', 'a-val' + (a.v == null ? ' none' : a.v < 0 ? ' neg' : ''), a.v == null ? '—' : fmtInt(a.v));
+    const v = shown(m, a.v);
+    const val = el('span', 'a-val' + (v == null ? ' none' : v < 0 ? ' neg' : ''), v == null ? '—' : fmtInt(v));
     topLine.append(nm, val); li.appendChild(topLine);
     li.append(...lines);
     if (flags.length) li.appendChild(el('div', 'a-flag', flags.join('. ') + '.'));
-    li._v = a.v ?? -Infinity;
+    li._v = v ?? -Infinity;
     return li;
   };
   const totals = (rows) => {
@@ -1059,21 +1095,12 @@ TEMPLATE = r"""<!doctype html>
     for (const [cls, label, value, vcls] of rows) { const d = el('div', cls); d.append(el('dt', '', label), el('dd', vcls || '', value)); dl.appendChild(d); }
     return dl;
   };
-  const legend = () => {
-    const p = el('p', 'legend');
-    p.append('Potential badges use the game’s colours, set by motivation: ');
-    MOT.forEach((name, i) => { p.append(el('span', 'pot m' + i, i === 5 ? 'reached' : name.toLowerCase()), i < 5 ? ' ' : ''); });
-    p.append('.');
-    return p;
-  };
-
   const renderDeal = (tid, persp) => {
     const rows = rowsOf[tid], deal = DEALS[tid], lead = leadRow(rows, persp);
     const order = [lead, ...rows.filter((r) => r !== lead)];
     const date = rows[0].date, three = rows.length > 2;
     const partIds = tid.split('+');
-    $('deal-meta').textContent = fmtLong(date) + ', ' + (tid.startsWith('D#') ? 'posted in Discord as ' + tid
-      : partIds.length > 1 ? 'trades ' + listJoin(partIds) + ', graded as one deal' : 'trade ' + tid);
+    $('deal-meta').textContent = fmtLong(date) + ', ' + (partIds.length > 1 ? 'trades ' + listJoin(partIds) + ', graded as one deal' : 'trade ' + tid);
     $('deal-title').textContent = order.map((r) => nameOf(r.team)).join('–');
     const thenEl = $('deal-then');
     thenEl.textContent = thenLine(rows, lead);
@@ -1114,21 +1141,14 @@ TEMPLATE = r"""<!doctype html>
           ['sum', 'Same assets today', fmtInt(s.now)],
           ['chg', 'Change since the trade', fmtNet(chg), chg > 0 ? 'up' : chg < 0 ? 'down' : 'flat'],
         ]));
-        if (s.markup) sec.appendChild(el('p', 'tot-note', 'Today includes the 5% the game added to these players at the trade (' + fmtNet(s.markup) + ').'));
       } else {
         sec.appendChild(totals([['sum', atLabel, fmtInt(r.value_in)]]));
       }
       box.appendChild(sec);
     }
     const notes = $('deal-notes'); notes.replaceChildren();
-    const add = (t) => notes.appendChild(el('p', '', t));
-    if (SAVE && deal) add('Value is the game’s trade value. The game only records each side’s total when the trade is made, so each asset shows what it is worth today, and each side compares its value at the trade with what the same assets are worth today. A negative value means the game counts the contract as a cost; a player who left as a free agent or retired is worth nothing to the team now.');
-    if (SAVE && deal && !estAll) add('OVR shows the overall on the day of the trade and today, from the game’s monthly progression reports.');
-    if (partIds.length > 1) add('Entered in the game as ' + partIds.length + ' trades the same day, since a trade takes at most 5 assets per side; the tag on each asset shows its part.');
-    if (three) add('Three-team trade: the game records one value for what each team sends, so each team’s value at the trade is split per asset by estimate.');
-    if (deal && deal.parts.some((p) => p.est)) add('Posted in Discord after the latest save, so the save has no recorded value for it; values at the trade are estimated from the save (players plus 5%, picks as is).');
-    if (!(SAVE && deal)) add('Built without the league save, so the card lists the assets without values.');
-    if (SAVE && deal) notes.appendChild(legend());
+    if (!(SAVE && deal)) notes.appendChild(el('p', '', 'Built without the league save, so the card lists the assets without values.'));
+    notes.hidden = !notes.children.length;
   };
 
   const dlg = $('deal');
@@ -1194,6 +1214,9 @@ TEMPLATE = r"""<!doctype html>
   for (const c of cuts.slice().reverse()) { const tr = document.createElement('tr'); cell(tr, c.min < -1 ? 'no floor' : fmtEdge(c.min), 'num'); cell(tr, c.grade); cb.appendChild(tr); }
 
   const render = () => { renderCards(); renderChart(); renderTeam(); };
+  const seasonSel = $('season');
+  seasonSel.replaceChildren(new Option('All seasons', ''), ...SEASONS.map((s) => new Option(seasonName(s), s)));
+  seasonSel.addEventListener('change', () => { season = seasonSel.value; compute(); render(); renderAll(); });
   render(); renderAll();
   let tmr; addEventListener('resize', () => { clearTimeout(tmr); tmr = setTimeout(renderChart, 120); });
   if (location.hash && valid(location.hash.slice(1).toUpperCase())) $('team').scrollIntoView();
@@ -1237,4 +1260,4 @@ LOADER = """<!doctype html>
 """
 with open(out, "w", encoding="utf-8") as f:
     f.write(LOADER)
-print(f"wrote {out} (loader) and report.html: {len(ledger)} ledger rows, {len({r['trade'] for r in ledger})} trades, {len(teams)} teams, through {data['asOf']}")
+print(f"wrote {out} (loader) and report.html: {len(ledger)} ledger rows, {len({r['trade'] for r in ledger})} deals, {len(teams)} teams, through {data['asOf']}")
