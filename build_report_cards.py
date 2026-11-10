@@ -51,7 +51,7 @@ min_trades, full_trades = MIN_TRADES, FULL_TRADES
 ASSET_CAP = 5
 # Pulock (MTL-NYI), Nylander (OTT-TOR), Kuznetsov (CGY-NJD, July 1 2027), Meyers (CAR-SEA, July 1 2027): separate deals
 KEEP_SEPARATE = {"3837", "3972", "4049", "4042"}
-# Calgary's Oct 6, 2027 deals, each entered as several trades with a 7th-round pick passed back and forth.
+# Calgary's Oct 6, 2027 deals, each entered as several trades with a 7th-round pick passed back and forth (confirmed by Zachary).
 EXTRA_MERGES = [("4098", "4099"), ("4100", "4101", "4102", "4103")]
 # Three-team trades (BUF retaining salary): value in / value out per team, split per asset by estimate.
 THREE_TEAM = {"3931": {"BUF": (455, 0), "OTT": (170, 764), "TOR": (553, 414)},

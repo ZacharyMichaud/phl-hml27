@@ -84,7 +84,7 @@ A save is a zip. The live state is `<root>/dynamic/d0.hlm`, gzip-compressed JSON
 - Combined deals:
   - The game caps a trade at 5 assets per side. Same-day trades between the same two teams are graded as one deal (`3834+3856+3857`) when any part reaches 5 assets in for a team.
   - Zachary confirmed these same-day pairs were separate deals (`KEEP_SEPARATE`): 3837 (Pulock, MTL–NYI); 3972 (Nylander, OTT–TOR); the two CGY–NJD trades of July 1, 2027 (4049 and 4050); and the CAR–SEA pair of July 1, 2027 (4042 and 4044).
-  - `EXTRA_MERGES`: Calgary's two Oct 6, 2027 deals, each entered as several trades with a 7th-round pick passed back and forth (4098+4099 Jarry to FLA; 4100 to 4103 Pachal for George with NYI). Zachary has not confirmed this merge.
+  - `EXTRA_MERGES`: Calgary's two Oct 6, 2027 deals, each entered as several trades with a 7th-round pick passed back and forth (4098+4099 Jarry to FLA; 4100 to 4103 Pachal for George with NYI). Zachary confirmed this merge.
 - Three-team trades 3931, 3942 and 3991 each have BUF retaining salary. Each team's value is split per asset by estimate. Current values (in/out):
   - 3931: BUF 455/0, OTT 170/764, TOR 553/414
   - 3942: BUF 203/34, DET 561/879, OTT 913/764
