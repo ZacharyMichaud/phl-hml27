@@ -28,7 +28,7 @@ Build command (reads every zip in `../saves/`, about a minute, and writes all si
 python build_report_cards.py
 ```
 
-From the 24 saves through Dec 2, 2027 this gives 9 combined deals, 219 deals and 441 ledger rows (2026-27: 169 deals; 2027-28: 50). The 341 rows before July 1, 2027 reproduce the old ledger exactly. The other tabs print one line each: 32 teams over 4 periods; 1,315 contracts through 2034-35; 438 games played and 906 to play; 626 skaters and 64 goalies in the NHL, 1,259 players in other leagues and 4 tables, with goals matching the standings for 32 of 32 teams; 3,864 rating changes over 7 monthly ticks and 1 summer rollover.
+From the 24 saves through Dec 2, 2027 this gives 8 combined deals, 221 deals and 445 ledger rows (2026-27: 169 deals; 2027-28: 52). The 341 rows before July 1, 2027 reproduce the old ledger exactly. The other tabs print one line each: 32 teams over 4 periods; 1,315 contracts through 2034-35; 438 games played and 906 to play; 626 skaters and 64 goalies in the NHL, 1,259 players in other leagues and 4 tables, with goals matching the standings for 32 of 32 teams; 3,864 rating changes over 7 monthly ticks and 1 summer rollover.
 
 ## How the ledger is built
 
@@ -150,7 +150,7 @@ A save is a zip. The live state is `<root>/dynamic/d0.hlm`, gzip-compressed JSON
   - Fewer than 3 trades shows INC. Fewer than 8 trades gets an asterisk.
 - Combined deals:
   - The game caps a trade at 5 assets per side. Same-day trades between the same two teams are graded as one deal (`3834+3856+3857`) when any part reaches 5 assets in for a team.
-  - Zachary confirmed these same-day pairs were separate deals (`KEEP_SEPARATE`): 3837 (Pulock, MTL–NYI); 3972 (Nylander, OTT–TOR); the two CGY–NJD trades of July 1, 2027 (4049 and 4050); and the CAR–SEA pair of July 1, 2027 (4042 and 4044).
+  - Zachary confirmed these same-day pairs were separate deals (`KEEP_SEPARATE`): 3837 (Pulock, MTL–NYI); 3972 (Nylander, OTT–TOR); the two CGY–NJD trades of July 1, 2027 (4049 and 4050); the CAR–SEA pair of July 1, 2027 (4042 and 4044); and the three PHI–CAR trades of Nov 2, 2027 (4109 Miller, 4112 Woll for Kerfoot, 4113 Thompson; confirmed Nov 11, 2026). One id per group is enough in the list.
   - `EXTRA_MERGES`: other groups to combine by hand; none now. The two it held, Calgary's Oct 6, 2027 moves, turned out to be waiver claims.
 - Three-team trades 3931, 3942 and 3991 each have BUF retaining salary. Value out is each team's `ValueOutSum`; value in is the sum of what it received, valued per asset at the trade. Values (in/out):
   - 3931: BUF 566/0, OTT 131/764, TOR 481/414
@@ -158,8 +158,6 @@ A save is a zip. The live state is `<root>/dynamic/d0.hlm`, gzip-compressed JSON
   - 3991: BUF 541/0, CHI 1964/2386, NYI 2386/2505
   - Until Nov 9, 2026 value in was a hand estimate (3931: BUF 455, OTT 170, TOR 553; 3942: BUF 203, DET 561; 3991: BUF 507, CHI 1998). The switch moved BUF from D- to D over all seasons, and for 2026-27 OTT from D to D- and TOR from C+ to C (3931 is now Even for TOR).
 - Open: OTT–VAN (DeMelo and Hamara swapped three times) and FLA–PIT (Verhaeghe and two 7ths back and forth) look like corrections. Each leg counts for now; ask Zachary before changing.
-- Open: PHI–CAR, Nov 2, 2027 (4109 Miller, 4112 Woll for Kerfoot, 4113 Thompson) is graded as one deal by the rule, since 4113 sends five players. Not yet confirmed with Zachary; if any was a separate deal, add its id to `KEEP_SEPARATE`.
-
 ## Next task
 
 1. Done Nov 9, 2026: the ledger is built from the official saves and the workbook is retired.

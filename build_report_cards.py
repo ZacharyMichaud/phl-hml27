@@ -53,8 +53,9 @@ min_trades, full_trades = MIN_TRADES, FULL_TRADES
 # KEEP_SEPARATE lists groups to leave split anyway (by any one of their trade ids);
 # EXTRA_MERGES lists other groups to combine, as tuples of trade ids.
 ASSET_CAP = 5
-# Pulock (MTL-NYI), Nylander (OTT-TOR), Kuznetsov (CGY-NJD, July 1 2027), Meyers (CAR-SEA, July 1 2027): separate deals
-KEEP_SEPARATE = {"3837", "3972", "4049", "4042"}
+# Pulock (MTL-NYI), Nylander (OTT-TOR), Kuznetsov (CGY-NJD, July 1 2027), Meyers (CAR-SEA, July 1 2027),
+# Thompson (PHI-CAR, Nov 2 2027: 4109, 4112 and 4113): separate deals
+KEEP_SEPARATE = {"3837", "3972", "4049", "4042", "4113"}
 EXTRA_MERGES = []
 # Moves the league enters in the game as trades but that are not trades, so they are left out (confirmed by
 # Zachary): waiver claims, entered as the player plus the waiving team's 7th for the claiming team's 7th, then
