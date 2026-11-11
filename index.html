@@ -11,11 +11,13 @@
   p { margin: 40px 16px; text-align: center; }
 </style>
 <script>
-  fetch('report.html?v=' + Date.now(), {cache: 'no-store'})
+  var files = {"value": "value.html", "cap": "cap.html", "standings": "standings.html", "progression": "progression.html"};
+  var file = files[new URLSearchParams(location.search).get('p')] || 'report.html';
+  fetch(file + '?v=' + Date.now(), {cache: 'no-store'})
     .then(function (r) { if (!r.ok) throw new Error(r.status); return r.text(); })
     .then(function (html) { document.open(); document.write(html); document.close(); })
-    .catch(function () { location.replace('report.html' + location.hash); });
+    .catch(function () { location.replace(file + location.hash); });
 </script>
 </head>
-<body><p>Loading the report cards…</p><noscript><p><a href="report.html">Open the report cards</a></p></noscript></body>
+<body><p>Loading…</p><noscript><p><a href="report.html">Open the report cards</a></p></noscript></body>
 </html>

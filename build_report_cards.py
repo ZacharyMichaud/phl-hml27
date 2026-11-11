@@ -25,6 +25,9 @@ import re
 import zipfile
 from collections import defaultdict
 
+import site_pages
+import site_shell
+
 ap = argparse.ArgumentParser(description="Build the HLM27 GM report cards page.")
 ap.add_argument("out", nargs="?", default="index.html", help="loader file to write; report.html goes next to it")
 ap.add_argument("--saves", default=os.path.join("..", "saves"), help="folder of league save zips (default ../saves)")
@@ -87,7 +90,7 @@ POTENTIAL = {"F": ["Franchise", "Elite", "Top 6 F", "Top 9 F", "4th line", "Dept
              "D": ["Franchise", "Elite", "Top 4 D", "Top 6 D", "7th D", "Depth", "Minor", "Semipro", "Amateur"],
              "G": ["Franchise", "Elite", "Starter", "Mid Starter", "Backup", "Depth", "Minor", "Semipro", "Amateur"]}
 PLAYER_KEYS = ("$type", "FirstName", "LastName", "Positions", "_PlayerType", "BaseOffense", "BaseDefense", "Birthday",
-               "TeamIds", "_ContractStatus", "Values", "_Potential", "_Motivation", "Drafted")
+               "TeamIds", "TeamId", "_ContractStatus", "Values", "_Potential", "_Motivation", "Drafted")
 MAIL_TYPES = ("ProgressionMailArgs", "TrainingCompletedMailArgs", "DailyTradeRecapMailArgs")
 
 
@@ -107,7 +110,9 @@ def read_save(path):
             q["Contract"] = {k: c[k] for k in ("LeagueId", "Salaries", "Length") if k in c}
         players[pid] = q
     return {
+        "path": path,
         "day": sl["LastSaveDay"][:10],
+        "year": sl.get("Year"),  # the season the stats belong to; it rolls over in September
         "code": {int(k): t["ShortCity"] for k, t in lg["TeamList"].items()},
         "leagues": {str(k): v.get("Abbreviation") or "" for k, v in sl["Leagues"].items()},
         "picks": [{k: p.get(k) for k in ("Year", "Round", "Original", "Owner", "_Value", "CachedValueExpiration")} for p in lg["PickList"]],
@@ -758,10 +763,11 @@ TEMPLATE = r"""<!doctype html>
     dialog.card[open] { animation: card-in .16s ease-out; }
     @keyframes card-in { from { opacity: 0; transform: translateY(10px); } }
   }
-</style>
+__NAVCSS__</style>
 </head>
 <body>
 <div class="wrap">
+  __NAV__
   <header>
     <h1>HLM27 GM report cards</h1>
     <p class="lede">Every GM graded on the trade value they took in versus sent out, across <b id="n-trades"></b> GM-to-GM trades<span id="range"> from <b id="d-first"></b> to <b id="d-last"></b></span>. Click a team to see every entry and exit, and any trade to see what each asset is worth.</p>
@@ -1385,37 +1391,18 @@ TEMPLATE = r"""<!doctype html>
 </html>
 """
 
-html = TEMPLATE.replace("__DATA__", payload)
+html = TEMPLATE.replace("__DATA__", payload).replace("__NAVCSS__", site_shell.NAV_CSS).replace("__NAV__", site_shell.nav("trades"))
 
 # GitHub Pages lets browsers cache a page for 10 minutes. So index.html is a tiny
-# loader that never changes; it fetches report.html with a fresh query string on
-# every visit, which skips both the browser and CDN caches. Commit report.html and
-# the site shows it as soon as the Pages deploy finishes.
-report = os.path.join(os.path.dirname(os.path.abspath(out)), "report.html")
-with open(report, "w", encoding="utf-8") as f:
+# loader that never changes; it fetches the page named by ?p= (report.html by default)
+# with a fresh query string on every visit, which skips both the browser and CDN
+# caches. Commit the pages and the site shows them as soon as the Pages deploy finishes.
+out_dir = os.path.dirname(os.path.abspath(out))
+with open(os.path.join(out_dir, "report.html"), "w", encoding="utf-8") as f:
     f.write(html)
-LOADER = """<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>HLM27 GM report cards</title>
-<style>
-  :root { color-scheme: light dark; }
-  body { margin: 0; font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; background: #f2f6f9; color: #5b6b82; }
-  @media (prefers-color-scheme: dark) { body { background: #0e1726; color: #9fb0c6; } }
-  p { margin: 40px 16px; text-align: center; }
-</style>
-<script>
-  fetch('report.html?v=' + Date.now(), {cache: 'no-store'})
-    .then(function (r) { if (!r.ok) throw new Error(r.status); return r.text(); })
-    .then(function (html) { document.open(); document.write(html); document.close(); })
-    .catch(function () { location.replace('report.html' + location.hash); });
-</script>
-</head>
-<body><p>Loading the report cards…</p><noscript><p><a href="report.html">Open the report cards</a></p></noscript></body>
-</html>
-"""
 with open(out, "w", encoding="utf-8") as f:
-    f.write(LOADER)
+    f.write(site_shell.LOADER)
 print(f"wrote {out} (loader) and report.html: {len(ledger)} ledger rows, {len({r['trade'] for r in ledger})} deals, {len(teams)} teams, through {data['asOf']}")
+
+# The other tabs: team value, cap, standings, progression.
+site_pages.build_all(state["path"], states=states, saves_dir=args.saves, out_dir=out_dir)

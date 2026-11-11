@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PHL standings</title>
+<meta name="description" content="Standings, shot share, luck and the playoff race in the HLM27 league.">
+<style>
+  :root {
+    color-scheme: light dark;
+    --ice: #f2f6f9; --paper: #ffffff; --ink: #11203a; --ink-soft: #5b6b82; --line: #d6dfe8; --line-strong: #aebbcb;
+    --blue: #1d5fa6; --blue-soft: #dbe8f7; --red: #b4121c; --red-soft: #f8dcdc; --stamp: #b4121c; --hover: #e9f0f8;
+    --bar: #7f8ea3; --track: #e3eaf1;
+    --sans: "Helvetica Neue", Helvetica, Arial, "Segoe UI", Roboto, sans-serif;
+    padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) { :root {
+    --ice: #0e1726; --paper: #15213a; --ink: #edf2f8; --ink-soft: #9fb0c6; --line: #2a3850; --line-strong: #46587a;
+    --blue: #6aa6ee; --blue-soft: #1c3458; --red: #f0636b; --red-soft: #4b1f24; --stamp: #f0636b; --hover: #1d2d4a;
+    --bar: #5d7090; --track: #1f2c45;
+  } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--ice); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.45; -webkit-text-size-adjust: 100%; }
+  a { color: var(--blue); }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 16px 16px 48px; }
+  h1 { font-size: clamp(30px, 5vw, 46px); font-weight: 800; letter-spacing: -0.02em; line-height: 1.05; margin: 0 0 8px; }
+  h2 { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; margin: 0; }
+  h3 { font-size: 15px; font-weight: 700; margin: 22px 0 6px; }
+  p { margin: 0; max-width: 70ch; }
+  .lede { color: var(--ink-soft); font-size: 16px; }
+  .meta { color: var(--ink-soft); font-size: 13px; margin-top: 6px; }
+  section { margin-top: 40px; }
+  .head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; padding-bottom: 10px; border-bottom: 2px solid var(--ink); margin-bottom: 12px; }
+  .note { color: var(--ink-soft); font-size: 13px; }
+  .scroll { overflow: auto; max-height: 76vh; border-bottom: 1px solid var(--line); }
+  .scroll.tall { max-height: none; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: middle; white-space: nowrap; }
+  th { position: sticky; top: 0; z-index: 1; background: var(--ice); color: var(--ink-soft); font-weight: 600; font-size: 13px; }
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { color: var(--ink); }
+  th[aria-sort="ascending"]::after { content: " \2191"; } th[aria-sort="descending"]::after { content: " \2193"; }
+  .num, th.num { text-align: right; }
+  tr.pick { cursor: pointer; } tr.pick:hover td { background: var(--hover); }
+  tr.me td { background: var(--blue-soft); }
+  tr.cut td { border-bottom: 2px solid var(--ink-soft); }
+  tr.sub td { color: var(--ink-soft); font-size: 13px; font-weight: 600; background: var(--ice); padding-top: 12px; }
+  tr.sum td { font-weight: 700; border-top: 1px solid var(--line-strong); }
+  .sec { display: table-cell; }
+  @media (max-width: 760px) { .sec, .wide { display: none; } th, td { padding: 7px 6px; } }
+  .grade { display: inline-block; min-width: 2.2em; font-weight: 800; letter-spacing: 0.02em; }
+  .g-a, .g-b { color: var(--blue); } .g-d, .g-f { color: var(--red); } .g-x { color: var(--ink-soft); font-weight: 600; }
+  .up { color: var(--blue); } .down { color: var(--red); } .soft { color: var(--ink-soft); }
+  .team-head { display: flex; flex-wrap: wrap; align-items: center; gap: 16px 28px; }
+  .stamp { width: 112px; height: 112px; border: 4px solid var(--stamp); color: var(--stamp); border-radius: 50%; display: grid; place-items: center; font-size: 46px; font-weight: 900; letter-spacing: -0.02em; transform: rotate(-8deg); flex: none; }
+  .team-title h2 { font-size: 30px; font-weight: 800; letter-spacing: -0.02em; }
+  .team-title .gm { color: var(--ink-soft); font-size: 15px; }
+  select, input[type="search"] { font: inherit; color: var(--ink); background: var(--paper); border: 1px solid var(--line-strong); border-radius: 4px; padding: 6px 10px; max-width: 100%; }
+  .team-title select { margin-top: 10px; }
+  .figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); gap: 0 24px; margin: 22px 0 14px; border-top: 1px solid var(--line); }
+  .figures div { padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .figures .l { color: var(--ink-soft); font-size: 13px; }
+  .figures .v { font-size: 26px; font-weight: 700; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+  .figures .s { color: var(--ink-soft); font-size: 13px; }
+  .tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-bottom: 10px; }
+  .tools input[type="search"] { width: min(100%, 22rem); }
+  .seg { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 4px; overflow: hidden; }
+  .seg button { font: inherit; font-size: 14px; color: var(--ink-soft); background: var(--paper); border: 0; border-right: 1px solid var(--line-strong); padding: 6px 12px; cursor: pointer; }
+  .seg button:last-child { border-right: 0; }
+  .seg button:hover { color: var(--ink); }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: var(--paper); font-weight: 600; }
+  .tag { display: inline-block; padding: 0 5px; border: 1px solid var(--line-strong); border-radius: 3px; color: var(--ink-soft); font-size: 11px; font-weight: 600; line-height: 16px; vertical-align: 1px; }
+  .pot { display: inline-block; padding: 0 6px; border-radius: 3px; font-size: 12px; font-weight: 700; line-height: 18px; vertical-align: 1px; white-space: nowrap; color: #fff; }
+  .pot.m0 { background: #2f6fd6; } .pot.m1 { background: #2b8a3e; } .pot.m2 { background: #e8890c; color: #2b1700; }
+  .pot.m3 { background: #d03b3b; } .pot.m4 { background: #7f1d1d; } .pot.m5 { background: #6f7a89; }
+  /* Bars: thin, rounded at the data end, on a quiet track. */
+  .meter { position: relative; display: inline-block; vertical-align: middle; width: 100%; min-width: 5rem; height: 8px; border-radius: 4px; background: var(--track); overflow: hidden; }
+  .meter i { position: absolute; top: 0; bottom: 0; left: 0; background: var(--bar); border-radius: 0 4px 4px 0; }
+  .meter i.blue { background: var(--blue); } .meter i.red { background: var(--red); }
+  .dbar { position: relative; display: inline-block; vertical-align: middle; width: 100%; min-width: 6rem; height: 8px; }
+  .dbar i { position: absolute; top: 0; bottom: 0; }
+  .dbar .pos { background: var(--blue); border-radius: 0 4px 4px 0; } .dbar .neg { background: var(--red); border-radius: 4px 0 0 4px; }
+  .dbar .zero { top: -3px; bottom: -3px; width: 1px; margin-left: -0.5px; background: var(--ink-soft); }
+  @media (forced-colors: active) { .meter i, .dbar .pos, .dbar .neg { background: CanvasText; } }
+  .chart { position: relative; }
+  .chart svg { display: block; width: 100%; height: auto; }
+  .tip { position: absolute; pointer-events: none; background: var(--paper); color: var(--ink); border: 1px solid var(--line-strong); border-radius: 4px; padding: 6px 9px; font-size: 13px; white-space: nowrap; box-shadow: 0 4px 14px rgba(0,0,0,.18); z-index: 3; }
+  .tip .t { color: var(--ink-soft); }
+  .empty { color: var(--ink-soft); padding: 16px 0; }
+  .method p { margin-bottom: 10px; }
+  .method b { font-weight: 700; }
+  .foot { margin-top: 48px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--ink-soft); font-size: 13px; }
+  :focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+  .nav { display: flex; align-items: baseline; gap: 0 20px; margin: 0 0 22px; border-bottom: 1px solid var(--line); font-size: 14px; overflow-x: auto; scrollbar-width: none; }
+  .nav::-webkit-scrollbar { display: none; }
+  .nav a { color: var(--ink-soft); text-decoration: none; padding: 8px 0 9px; border-bottom: 2px solid transparent; white-space: nowrap; }
+  .nav a:hover { color: var(--ink); }
+  .nav a[aria-current="page"] { color: var(--ink); font-weight: 700; border-bottom-color: var(--ink); }
+  .nav .brand { color: var(--ink); font-weight: 800; letter-spacing: .06em; margin-right: 4px; }
+
+  td.bar { width: 16%; min-width: 5.5rem; }
+  .blocks { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 26rem), 1fr)); gap: 0 32px; }
+  .blocks h3 { margin-top: 14px; }
+  table.tight th, table.tight td { padding: 6px 6px; font-size: 14px; }
+  .pick-team { font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="nav" aria-label="Pages"><span class="brand">PHL</span><a href="./">Trades</a><a href="./?p=value">Team value</a><a href="./?p=cap">Cap</a><a href="./?p=standings" aria-current="page">Standings</a><a href="./?p=progression">Progression</a></nav>
+
+  <header>
+    <h1>Standings</h1>
+    <p class="lede"><span id="season"></span>: the table, what sits under it, and how the playoff race is likely to end.</p>
+    <p class="meta">Through the league save of <span id="as-of"></span>: <span id="n-played"></span> games played, <span id="n-left"></span> to go. Updated <span id="built"></span>.</p>
+    <p class="meta pick-team"><label for="t-pick">Highlight</label> <select id="t-pick"></select></p>
+  </header>
+
+  <section id="table">
+    <div class="head"><h2>The table</h2>
+      <span class="seg" id="view"><button type="button" data-v="wild" aria-pressed="true">Wild card</button><button type="button" data-v="div" aria-pressed="false">Division</button><button type="button" data-v="league" aria-pressed="false">League</button></span></div>
+    <div id="tables"></div>
+    <p class="note" style="margin-top:10px">The line is the playoff cut: the top three in each division, then two wild cards per conference.</p>
+  </section>
+
+  <section id="race">
+    <div class="head"><h2>The race</h2><span class="note">The rest of the season played out <span id="n-sims"></span> times. Click a header to sort.</span></div>
+    <div class="scroll tall">
+      <table id="race-table">
+        <thead><tr>
+          <th data-k="code" data-d="asc">Team</th>
+          <th class="num" data-k="pts">PTS</th>
+          <th class="num" data-k="proj" title="Average final points, with the range 8 seasons in 10 land in">Projected</th>
+          <th class="num" data-k="po">Playoffs</th>
+          <th class="sec" aria-label="Playoff chance"></th>
+          <th class="num sec" data-k="dv" title="Chance of finishing first in the division">Division</th>
+          <th class="num" data-k="first" title="Chance of the first overall pick, after the lottery">1st pick</th>
+          <th class="num sec" data-k="str" title="Goals per game better or worse than an average team">Strength</th>
+          <th class="num sec" data-k="sosLeft" title="Average strength of the opponents left; above zero is a harder road">Schedule left</th>
+          <th class="num sec" data-k="homeLeft">Home left</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="hood">
+    <div class="head"><h2>Under the hood</h2><span class="note">Who is driving play, who is running hot. Click a header to sort.</span></div>
+    <div class="scroll tall">
+      <table id="hood-table">
+        <thead><tr>
+          <th data-k="code" data-d="asc">Team</th>
+          <th class="num" data-k="cfp" title="Share of all shot attempts in the team's games">Shot share</th>
+          <th class="num sec" data-k="sfg">Shots for</th>
+          <th class="num sec" data-k="sag">Shots against</th>
+          <th class="num" data-k="shp" title="Goals per shot on goal">Sh%</th>
+          <th class="num" data-k="svp" title="Saves per shot against">Sv%</th>
+          <th class="num" data-k="pdo" title="Sh% plus Sv%. Far from 100 tends not to last">PDO</th>
+          <th class="num" data-k="pp">PP%</th>
+          <th class="num" data-k="pk">PK%</th>
+          <th class="num sec" data-k="fo">Faceoffs</th>
+          <th class="sec" data-k="onep" title="Games decided by one goal: wins, losses, overtime losses">One-goal games</th>
+          <th class="sec" data-k="otp" title="Overtime wins and losses">Overtime</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="method" class="method">
+    <div class="head"><h2>How it works</h2></div>
+    <p><b>The table.</b> Built from every regular-season game in the save: two points for a win, one for an overtime loss. Teams level on points are split by fewer games played, then regulation wins, wins and goal difference, the NHL's order; the game's own order isn't confirmed.</p>
+    <p><b>Under the hood.</b> Shot share is a team's part of all shot attempts in its games, the best quick read of who controls play. Sh% and Sv% are goals per shot, for and against; PDO adds them up, and a team far above or below 100 is usually riding luck that fades. Faceoffs is the share won.</p>
+    <p><b>The race.</b> Each team gets a strength, in goals per game against an average team. It starts from the lineup: the average overall of the 12 forwards, the six defencemen and the starting goalie, weighted by how much each has mattered to goal difference in this league. Results then pull it toward the team's actual goal difference, slowly: a full season of games moves it about halfway. Every game left is played out <span id="m-sims"></span> times, with a small edge for the home team and <span id="m-ot"></span>% of games going to overtime for the loser's point.</p>
+    <p><b>Playoffs and the pick.</b> Playoffs is how often a team finishes in the top three of its division or takes one of its conference's two wild cards. 1st pick is its chance at first overall once the lottery is run among the 16 teams that miss: the league's odds, with a winner able to move up at most ten spots.</p>
+    <p><b>How good is it?</b> Checked against every game of 2026-27 and the start of this season, the lineup number called winners better than the standings did. It doesn't know about trades, injuries or call-ups that haven't happened, so read it as where things point today.</p>
+  </section>
+
+  <footer class="foot">Calgary Flames front office, HLM27 sim league. Built from the official league saves.</footer>
+</div>
+<script id="data" type="application/json">{"asOf":"2027-11-02","names":{"ANA":"Anaheim","BOS":"Boston","BUF":"Buffalo","CAR":"Carolina","CBJ":"Columbus","CGY":"Calgary","CHI":"Chicago","COL":"Colorado","DAL":"Dallas","DET":"Detroit","EDM":"Edmonton","FLA":"Florida","LAK":"Los Angeles","MIN":"Minnesota","MTL":"Montreal","NJD":"New Jersey","NSH":"Nashville","NYI":"NY Islanders","NYR":"NY Rangers","OTT":"Ottawa","PHI":"Philadelphia","PIT":"Pittsburgh","SEA":"Seattle","SJS":"San Jose","STL":"St. Louis","TBL":"Tampa Bay","TOR":"Toronto","UTA":"Utah","VAN":"Vancouver","VGK":"Vegas","WPG":"Winnipeg","WSH":"Washington"},"teams":[{"code":"ANA","conf":1,"div":2,"gp":13,"w":2,"l":11,"otl":0,"otw":1,"gf":35,"ga":66,"sf":440,"sa":479,"cf":762,"ca":823,"fw":153,"fl":213,"home":[1,3,0],"away":[1,8,0],"one":[1,3,0],"pts":4,"l10":[1,9,0],"strk":"W1","ppg":9,"ppo":24,"pkga":9,"pko":34,"str":-0.66,"lineup":-0.44,"proj":70.4,"lo":59,"hi":82,"po":3.6,"dv":0.0,"first":9.0,"left":71,"homeLeft":38,"sosLeft":-0.06,"sosPlayed":0.33},{"code":"BOS","conf":0,"div":1,"gp":13,"w":4,"l":6,"otl":3,"otw":1,"gf":36,"ga":45,"sf":464,"sa":403,"cf":791,"ca":676,"fw":172,"fl":155,"home":[3,3,2],"away":[1,3,1],"one":[2,2,3],"pts":11,"l10":[2,5,3],"strk":"L1","ppg":8,"ppo":28,"pkga":11,"pko":35,"str":0.21,"lineup":0.32,"proj":90.3,"lo":78,"hi":102,"po":32.4,"dv":0.4,"first":1.3,"left":71,"homeLeft":34,"sosLeft":0.03,"sosPlayed":-0.19},{"code":"BUF","conf":0,"div":1,"gp":14,"w":3,"l":8,"otl":3,"otw":0,"gf":38,"ga":47,"sf":423,"sa":524,"cf":726,"ca":875,"fw":147,"fl":228,"home":[1,5,3],"away":[2,3,0],"one":[0,1,3],"pts":9,"l10":[1,7,2],"strk":"W1","ppg":6,"ppo":28,"pkga":15,"pko":51,"str":-1.42,"lineup":-1.53,"proj":60.3,"lo":50,"hi":71,"po":0.0,"dv":0.0,"first":16.4,"left":70,"homeLeft":33,"sosLeft":0.04,"sosPlayed":0.25},{"code":"CAR","conf":0,"div":0,"gp":14,"w":8,"l":6,"otl":0,"otw":1,"gf":51,"ga":42,"sf":491,"sa":458,"cf":846,"ca":783,"fw":219,"fl":131,"home":[3,1,0],"away":[5,5,0],"one":[4,5,0],"pts":16,"l10":[6,4,0],"strk":"W1","ppg":3,"ppo":17,"pkga":4,"pko":31,"str":0.51,"lineup":0.49,"proj":101.6,"lo":90,"hi":113,"po":86.5,"dv":44.3,"first":0.1,"left":70,"homeLeft":38,"sosLeft":-0.08,"sosPlayed":0.14},{"code":"CBJ","conf":0,"div":0,"gp":14,"w":10,"l":3,"otl":1,"otw":4,"gf":56,"ga":49,"sf":475,"sa":482,"cf":813,"ca":824,"fw":189,"fl":209,"home":[4,1,0],"away":[6,2,1],"one":[5,1,1],"pts":21,"l10":[7,2,1],"strk":"W2","ppg":10,"ppo":32,"pkga":6,"pko":27,"str":-0.04,"lineup":-0.12,"proj":95.7,"lo":84,"hi":107,"po":66.6,"dv":17.8,"first":0.5,"left":70,"homeLeft":37,"sosLeft":0.01,"sosPlayed":-0.15},{"code":"CGY","conf":1,"div":2,"gp":13,"w":7,"l":6,"otl":0,"otw":1,"gf":50,"ga":37,"sf":414,"sa":467,"cf":721,"ca":813,"fw":174,"fl":175,"home":[3,2,0],"away":[4,4,0],"one":[1,2,0],"pts":14,"l10":[6,4,0],"strk":"L1","ppg":4,"ppo":22,"pkga":7,"pko":22,"str":-0.28,"lineup":-0.44,"proj":85.0,"lo":73,"hi":97,"po":37.3,"dv":1.8,"first":2.5,"left":71,"homeLeft":37,"sosLeft":0.03,"sosPlayed":-0.24},{"code":"CHI","conf":1,"div":3,"gp":14,"w":5,"l":7,"otl":2,"otw":1,"gf":41,"ga":56,"sf":485,"sa":504,"cf":833,"ca":872,"fw":160,"fl":200,"home":[4,3,1],"away":[1,4,1],"one":[4,1,2],"pts":12,"l10":[3,6,1],"strk":"W1","ppg":9,"ppo":27,"pkga":2,"pko":16,"str":-0.3,"lineup":-0.2,"proj":80.8,"lo":69,"hi":92,"po":5.6,"dv":0.1,"first":4.1,"left":70,"homeLeft":34,"sosLeft":0.09,"sosPlayed":-0.16},{"code":"COL","conf":1,"div":3,"gp":14,"w":10,"l":3,"otl":1,"otw":1,"gf":54,"ga":42,"sf":490,"sa":463,"cf":836,"ca":804,"fw":227,"fl":155,"home":[5,2,1],"away":[5,1,0],"one":[5,1,1],"pts":21,"l10":[6,3,1],"strk":"OT1","ppg":6,"ppo":21,"pkga":9,"pko":27,"str":0.27,"lineup":0.19,"proj":100.6,"lo":89,"hi":112,"po":75.8,"dv":8.6,"first":0.1,"left":70,"homeLeft":34,"sosLeft":0.02,"sosPlayed":0.04},{"code":"DAL","conf":1,"div":3,"gp":14,"w":9,"l":4,"otl":1,"otw":1,"gf":61,"ga":56,"sf":555,"sa":481,"cf":948,"ca":809,"fw":165,"fl":215,"home":[7,2,0],"away":[2,2,1],"one":[4,1,1],"pts":19,"l10":[7,3,0],"strk":"L1","ppg":7,"ppo":21,"pkga":8,"pko":17,"str":0.64,"lineup":0.67,"proj":105.7,"lo":94,"hi":117,"po":89.4,"dv":21.1,"first":0.0,"left":70,"homeLeft":33,"sosLeft":-0.03,"sosPlayed":0.2},{"code":"DET","conf":0,"div":1,"gp":15,"w":6,"l":9,"otl":0,"otw":2,"gf":53,"ga":63,"sf":495,"sa":509,"cf":846,"ca":892,"fw":203,"fl":182,"home":[4,6,0],"away":[2,3,0],"one":[3,3,0],"pts":12,"l10":[3,7,0],"strk":"L2","ppg":14,"ppo":35,"pkga":9,"pko":26,"str":-0.48,"lineup":-0.45,"proj":77.4,"lo":66,"hi":89,"po":3.1,"dv":0.0,"first":5.5,"left":69,"homeLeft":32,"sosLeft":0.05,"sosPlayed":-0.05},{"code":"EDM","conf":1,"div":2,"gp":15,"w":9,"l":5,"otl":1,"otw":0,"gf":66,"ga":50,"sf":589,"sa":521,"cf":1031,"ca":890,"fw":202,"fl":213,"home":[4,2,0],"away":[5,3,1],"one":[2,1,1],"pts":19,"l10":[6,4,0],"strk":"W1","ppg":14,"ppo":34,"pkga":4,"pko":29,"str":0.76,"lineup":0.71,"proj":108.0,"lo":97,"hi":119,"po":98.9,"dv":72.4,"first":0.0,"left":69,"homeLeft":36,"sosLeft":-0.12,"sosPlayed":0.2},{"code":"FLA","conf":0,"div":1,"gp":13,"w":8,"l":4,"otl":1,"otw":2,"gf":51,"ga":46,"sf":461,"sa":444,"cf":791,"ca":759,"fw":190,"fl":144,"home":[5,2,0],"away":[3,2,1],"one":[3,0,1],"pts":17,"l10":[7,2,1],"strk":"W4","ppg":7,"ppo":23,"pkga":7,"pko":22,"str":0.65,"lineup":0.68,"proj":105.1,"lo":94,"hi":116,"po":90.2,"dv":13.4,"first":0.0,"left":71,"homeLeft":35,"sosLeft":-0.03,"sosPlayed":0.04},{"code":"LAK","conf":1,"div":2,"gp":13,"w":2,"l":7,"otl":4,"otw":1,"gf":31,"ga":54,"sf":425,"sa":503,"cf":719,"ca":851,"fw":188,"fl":150,"home":[1,2,4],"away":[1,5,0],"one":[1,1,4],"pts":8,"l10":[1,6,3],"strk":"W1","ppg":3,"ppo":14,"pkga":11,"pko":37,"str":-0.94,"lineup":-0.84,"proj":68.6,"lo":57,"hi":80,"po":2.0,"dv":0.0,"first":10.2,"left":71,"homeLeft":35,"sosLeft":-0.01,"sosPlayed":0.19},{"code":"MIN","conf":1,"div":3,"gp":13,"w":8,"l":4,"otl":1,"otw":1,"gf":49,"ga":41,"sf":482,"sa":430,"cf":818,"ca":734,"fw":161,"fl":184,"home":[4,3,0],"away":[4,1,1],"one":[4,2,1],"pts":17,"l10":[7,2,1],"strk":"W3","ppg":8,"ppo":23,"pkga":9,"pko":27,"str":0.83,"lineup":0.85,"proj":108.5,"lo":97,"hi":120,"po":94.1,"dv":32.1,"first":0.0,"left":71,"homeLeft":35,"sosLeft":-0.05,"sosPlayed":0.24},{"code":"MTL","conf":0,"div":1,"gp":14,"w":8,"l":5,"otl":1,"otw":1,"gf":60,"ga":50,"sf":525,"sa":448,"cf":910,"ca":802,"fw":222,"fl":159,"home":[6,2,1],"away":[2,3,0],"one":[3,2,1],"pts":17,"l10":[7,2,1],"strk":"OT1","ppg":9,"ppo":32,"pkga":7,"pko":25,"str":0.27,"lineup":0.21,"proj":97.3,"lo":86,"hi":109,"po":66.5,"dv":2.5,"first":0.3,"left":70,"homeLeft":33,"sosLeft":-0.01,"sosPlayed":0.04},{"code":"NJD","conf":0,"div":0,"gp":14,"w":8,"l":6,"otl":0,"otw":1,"gf":58,"ga":54,"sf":475,"sa":478,"cf":824,"ca":854,"fw":172,"fl":181,"home":[4,4,0],"away":[4,2,0],"one":[4,2,0],"pts":16,"l10":[6,4,0],"strk":"W4","ppg":9,"ppo":25,"pkga":5,"pko":16,"str":-0.03,"lineup":-0.07,"proj":91.1,"lo":79,"hi":103,"po":46.5,"dv":8.0,"first":1.1,"left":70,"homeLeft":34,"sosLeft":-0.03,"sosPlayed":0.02},{"code":"NSH","conf":1,"div":3,"gp":15,"w":11,"l":3,"otl":1,"otw":5,"gf":56,"ga":45,"sf":556,"sa":567,"cf":928,"ca":947,"fw":221,"fl":174,"home":[4,1,0],"away":[7,2,1],"one":[7,0,1],"pts":23,"l10":[7,3,0],"strk":"W3","ppg":3,"ppo":30,"pkga":7,"pko":26,"str":0.22,"lineup":0.15,"proj":101.3,"lo":90,"hi":113,"po":77.5,"dv":10.0,"first":0.1,"left":69,"homeLeft":37,"sosLeft":0.0,"sosPlayed":0.13},{"code":"NYI","conf":0,"div":0,"gp":15,"w":8,"l":6,"otl":1,"otw":0,"gf":60,"ga":58,"sf":527,"sa":493,"cf":933,"ca":854,"fw":224,"fl":177,"home":[4,2,1],"away":[4,4,0],"one":[2,1,1],"pts":17,"l10":[6,4,0],"strk":"W1","ppg":8,"ppo":30,"pkga":10,"pko":24,"str":0.35,"lineup":0.38,"proj":97.8,"lo":86,"hi":109,"po":75.8,"dv":24.7,"first":0.3,"left":69,"homeLeft":35,"sosLeft":-0.02,"sosPlayed":-0.11},{"code":"NYR","conf":0,"div":0,"gp":14,"w":6,"l":4,"otl":4,"otw":1,"gf":54,"ga":54,"sf":429,"sa":519,"cf":748,"ca":874,"fw":145,"fl":232,"home":[1,3,0],"away":[5,1,4],"one":[1,2,4],"pts":16,"l10":[6,3,1],"strk":"L1","ppg":5,"ppo":19,"pkga":10,"pko":34,"str":-0.77,"lineup":-0.87,"proj":78.0,"lo":67,"hi":89,"po":5.6,"dv":0.3,"first":5.4,"left":70,"homeLeft":38,"sosLeft":0.04,"sosPlayed":-0.1},{"code":"OTT","conf":0,"div":1,"gp":15,"w":11,"l":3,"otl":1,"otw":2,"gf":69,"ga":57,"sf":604,"sa":505,"cf":997,"ca":869,"fw":226,"fl":213,"home":[6,0,1],"away":[5,3,0],"one":[4,0,1],"pts":23,"l10":[6,3,1],"strk":"L1","ppg":13,"ppo":37,"pkga":12,"pko":34,"str":0.57,"lineup":0.54,"proj":105.8,"lo":95,"hi":117,"po":91.3,"dv":14.6,"first":0.0,"left":69,"homeLeft":35,"sosLeft":0.07,"sosPlayed":-0.43},{"code":"PHI","conf":0,"div":0,"gp":16,"w":8,"l":7,"otl":1,"otw":1,"gf":59,"ga":60,"sf":513,"sa":568,"cf":887,"ca":965,"fw":200,"fl":229,"home":[3,2,0],"away":[5,5,1],"one":[5,2,1],"pts":17,"l10":[4,5,1],"strk":"L1","ppg":9,"ppo":35,"pkga":9,"pko":37,"str":-0.27,"lineup":-0.3,"proj":86.1,"lo":75,"hi":98,"po":25.0,"dv":2.8,"first":2.2,"left":68,"homeLeft":37,"sosLeft":-0.01,"sosPlayed":0.03},{"code":"PIT","conf":0,"div":0,"gp":15,"w":7,"l":7,"otl":1,"otw":1,"gf":49,"ga":62,"sf":494,"sa":550,"cf":859,"ca":960,"fw":182,"fl":234,"home":[6,4,1],"away":[1,3,0],"one":[5,1,1],"pts":15,"l10":[5,4,1],"strk":"W1","ppg":6,"ppo":29,"pkga":7,"pko":29,"str":-0.22,"lineup":-0.13,"proj":85.3,"lo":74,"hi":97,"po":22.1,"dv":2.2,"first":2.4,"left":69,"homeLeft":31,"sosLeft":0.0,"sosPlayed":-0.07},{"code":"SEA","conf":1,"div":2,"gp":13,"w":1,"l":12,"otl":0,"otw":0,"gf":32,"ga":61,"sf":412,"sa":461,"cf":720,"ca":809,"fw":187,"fl":172,"home":[0,5,0],"away":[1,7,0],"one":[0,5,0],"pts":2,"l10":[1,9,0],"strk":"L4","ppg":5,"ppo":31,"pkga":6,"pko":21,"str":-0.79,"lineup":-0.6,"proj":64.1,"lo":52,"hi":75,"po":0.7,"dv":0.0,"first":13.0,"left":71,"homeLeft":37,"sosLeft":0.07,"sosPlayed":-0.29},{"code":"SJS","conf":1,"div":2,"gp":14,"w":9,"l":3,"otl":2,"otw":0,"gf":65,"ga":46,"sf":509,"sa":511,"cf":875,"ca":869,"fw":196,"fl":179,"home":[5,1,2],"away":[4,2,0],"one":[1,0,2],"pts":20,"l10":[8,1,1],"strk":"OT1","ppg":10,"ppo":28,"pkga":4,"pko":19,"str":0.17,"lineup":0.0,"proj":98.4,"lo":87,"hi":110,"po":90.0,"dv":19.7,"first":0.2,"left":70,"homeLeft":34,"sosLeft":-0.01,"sosPlayed":-0.16},{"code":"STL","conf":1,"div":3,"gp":14,"w":5,"l":9,"otl":0,"otw":0,"gf":37,"ga":47,"sf":457,"sa":500,"cf":785,"ca":851,"fw":157,"fl":226,"home":[4,4,0],"away":[1,5,0],"one":[2,2,0],"pts":10,"l10":[4,6,0],"strk":"L2","ppg":5,"ppo":36,"pkga":10,"pko":30,"str":-0.09,"lineup":-0.01,"proj":83.5,"lo":72,"hi":95,"po":10.2,"dv":0.1,"first":3.0,"left":70,"homeLeft":34,"sosLeft":0.01,"sosPlayed":0.19},{"code":"TBL","conf":0,"div":1,"gp":13,"w":11,"l":2,"otl":0,"otw":2,"gf":70,"ga":46,"sf":511,"sa":416,"cf":878,"ca":729,"fw":204,"fl":164,"home":[8,0,0],"away":[3,2,0],"one":[3,1,0],"pts":22,"l10":[9,1,0],"strk":"W3","ppg":9,"ppo":23,"pkga":5,"pko":22,"str":0.96,"lineup":0.85,"proj":115.0,"lo":104,"hi":126,"po":98.8,"dv":56.6,"first":0.0,"left":71,"homeLeft":34,"sosLeft":-0.01,"sosPlayed":-0.16},{"code":"TOR","conf":0,"div":1,"gp":14,"w":12,"l":2,"otl":0,"otw":0,"gf":63,"ga":34,"sf":498,"sa":458,"cf":858,"ca":803,"fw":191,"fl":151,"home":[5,1,0],"away":[7,1,0],"one":[0,0,0],"pts":24,"l10":[8,2,0],"strk":"L1","ppg":13,"ppo":30,"pkga":6,"pko":20,"str":0.32,"lineup":0.08,"proj":104.7,"lo":93,"hi":116,"po":89.0,"dv":12.4,"first":0.1,"left":70,"homeLeft":36,"sosLeft":0.02,"sosPlayed":-0.13},{"code":"UTA","conf":1,"div":3,"gp":15,"w":6,"l":8,"otl":1,"otw":0,"gf":60,"ga":66,"sf":563,"sa":538,"cf":960,"ca":911,"fw":207,"fl":214,"home":[5,3,1],"away":[1,5,0],"one":[0,1,1],"pts":13,"l10":[2,7,1],"strk":"W1","ppg":3,"ppo":29,"pkga":6,"pko":18,"str":0.45,"lineup":0.57,"proj":95.0,"lo":84,"hi":106,"po":51.2,"dv":2.7,"first":0.5,"left":69,"homeLeft":33,"sosLeft":-0.01,"sosPlayed":0.13},{"code":"VAN","conf":1,"div":2,"gp":14,"w":3,"l":11,"otl":0,"otw":0,"gf":46,"ga":67,"sf":426,"sa":502,"cf":764,"ca":884,"fw":174,"fl":189,"home":[3,3,0],"away":[0,8,0],"one":[1,2,0],"pts":6,"l10":[3,7,0],"strk":"L2","ppg":6,"ppo":16,"pkga":8,"pko":22,"str":-0.81,"lineup":-0.72,"proj":67.9,"lo":56,"hi":79,"po":1.6,"dv":0.0,"first":10.5,"left":70,"homeLeft":36,"sosLeft":-0.01,"sosPlayed":0.1},{"code":"VGK","conf":1,"div":2,"gp":13,"w":7,"l":6,"otl":0,"otw":1,"gf":59,"ga":58,"sf":462,"sa":442,"cf":799,"ca":769,"fw":170,"fl":176,"home":[4,4,0],"away":[3,2,0],"one":[3,1,0],"pts":14,"l10":[5,5,0],"strk":"L2","ppg":9,"ppo":23,"pkga":3,"pko":18,"str":0.01,"lineup":-0.0,"proj":91.0,"lo":79,"hi":103,"po":69.7,"dv":6.0,"first":1.0,"left":71,"homeLeft":34,"sosLeft":-0.02,"sosPlayed":-0.06},{"code":"WPG","conf":1,"div":3,"gp":14,"w":8,"l":4,"otl":2,"otw":1,"gf":60,"ga":49,"sf":531,"sa":476,"cf":901,"ca":821,"fw":192,"fl":192,"home":[4,1,2],"away":[4,3,0],"one":[2,2,2],"pts":18,"l10":[5,3,2],"strk":"OT1","ppg":10,"ppo":31,"pkga":7,"pko":23,"str":0.8,"lineup":0.81,"proj":107.1,"lo":96,"hi":118,"po":92.3,"dv":25.3,"first":0.0,"left":70,"homeLeft":35,"sosLeft":-0.01,"sosPlayed":0.05},{"code":"WSH","conf":0,"div":0,"gp":14,"w":4,"l":10,"otl":0,"otw":0,"gf":46,"ga":67,"sf":430,"sa":511,"cf":751,"ca":882,"fw":195,"fl":199,"home":[1,5,0],"away":[3,5,0],"one":[1,2,0],"pts":8,"l10":[3,7,0],"strk":"W1","ppg":8,"ppo":33,"pkga":15,"pko":47,"str":-0.88,"lineup":-0.8,"proj":68.5,"lo":57,"hi":80,"po":0.5,"dv":0.0,"first":10.1,"left":70,"homeLeft":36,"sosLeft":0.02,"sosPlayed":0.05}],"confs":["East","West"],"divs":["Metropolitan","Atlantic","Pacific","Central"],"played":224,"left":1120,"sims":10000,"season":"2027-28","ot":15.6,"lottery":[25.5,13.5,11.5,9.5,8.5,7.5,6.5,6.0,5.0,3.5,3.0,0.0,0.0,0.0,0.0,0.0],"built":"2026-11-10"}</script>
+<script>
+(function () {
+  'use strict';
+
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+  const D = JSON.parse($('data').textContent);
+  const fmtDate = (iso) => new Date(iso + 'T12:00:00').toLocaleDateString('en-CA', {year: 'numeric', month: 'short', day: 'numeric'});
+  const money = (x) => { if (x == null) return ''; const a = Math.abs(x), s = x < 0 ? '−' : ''; return a >= 1e6 ? s + '$' + (a / 1e6).toFixed(a % 1e5 ? (a % 1e4 ? 3 : 2) : 1).replace(/(\.\d*?[1-9])0+$/, '$1') + 'M' : s + '$' + Math.round(a / 1000) + 'K'; };
+  const mil = (x) => (x < 0 ? '−' : '') + '$' + (Math.abs(x) / 1e6).toFixed(1) + 'M';
+  const signed = (x, d) => (x > 0 ? '+' : x < 0 ? '−' : '') + Math.abs(x).toLocaleString('en-CA', {minimumFractionDigits: d || 0, maximumFractionDigits: d || 0});
+  const cls = (x) => x > 0 ? 'up' : x < 0 ? 'down' : 'soft';
+  const gradeCls = (g) => 'g-' + (g ? g[0].toLowerCase() : 'x');
+  { const nav = document.querySelector('.nav'), cur = nav && nav.querySelector('[aria-current]'); if (cur) nav.scrollLeft = Math.max(0, cur.offsetLeft - nav.offsetLeft - 60); }  // keep the open tab in view on a phone
+  $('as-of') && ($('as-of').textContent = fmtDate(D.asOf));
+  $('built') && ($('built').textContent = fmtDate(D.built));
+  // The picked team lives in the address bar as #CGY, so a team's view can be shared.
+  const teamCodes = new Set((D.teams || []).map((t) => t.code || t.team));
+  const hashTeam = () => { const h = (location.hash || '').slice(1).toUpperCase(); return teamCodes.has(h) ? h : null; };
+  const setHashTeam = (code) => history.replaceState(null, '', '#' + code);
+  function fillTeams(sel, picked, names) {
+    sel.innerHTML = [...teamCodes].sort().map((c) => `<option value="${c}"${c === picked ? ' selected' : ''}>${c} · ${esc(names[c] || c)}</option>`).join('');
+  }
+  // Click a header to sort; data-k names the row field, data-d its first direction.
+  function sortable(table, state, draw) {
+    const heads = [...table.querySelectorAll('th[data-k]')];
+    const mark = () => heads.forEach((th) => { th.classList.add('sortable'); th.setAttribute('aria-sort', th.dataset.k === state.k ? (state.d > 0 ? 'ascending' : 'descending') : 'none'); });
+    heads.forEach((th) => { th.tabIndex = 0; const go = () => { const k = th.dataset.k; state.d = state.k === k ? -state.d : (th.dataset.d === 'asc' ? 1 : -1); state.k = k; mark(); draw(); };
+      th.addEventListener('click', go); th.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } }); });
+    mark();
+  }
+  const by = (state) => (a, b) => { const x = a[state.k], y = b[state.k]; return (typeof x === 'string' || typeof y === 'string' ? String(x).localeCompare(String(y)) : (x == null ? -1e99 : x) - (y == null ? -1e99 : y)) * state.d; };
+  // One tooltip per chart: show(html, evt) follows the pointer inside the chart box.
+  function tooltip(box) {
+    const tip = document.createElement('div'); tip.className = 'tip'; tip.hidden = true; box.appendChild(tip);
+    return { show(html, e) { tip.innerHTML = html; tip.hidden = false; const r = box.getBoundingClientRect(); let x = e.clientX - r.left + 12, y = e.clientY - r.top + 12;
+        if (x + tip.offsetWidth > r.width) x = Math.max(0, e.clientX - r.left - tip.offsetWidth - 12); tip.style.left = x + 'px'; tip.style.top = y + 'px'; }, hide() { tip.hidden = true; } };
+  }
+
+  const pct = (a, b) => b ? 100 * a / b : 0;
+  const rec = (r) => r.join('–');
+  const T = D.teams.map((t) => Object.assign(t, { name: D.names[t.code] || t.code, diff: t.gf - t.ga, pp100: t.gp ? t.pts / (2 * t.gp) : 0, rw: t.w - t.otw,
+    cfp: pct(t.cf, t.cf + t.ca), sfg: t.gp ? t.sf / t.gp : 0, sag: t.gp ? t.sa / t.gp : 0, shp: pct(t.gf, t.sf), svp: 100 - pct(t.ga, t.sa),
+    pp: pct(t.ppg, t.ppo), pk: 100 - pct(t.pkga, t.pko), fo: pct(t.fw, t.fw + t.fl), onep: pct(2 * t.one[0] + t.one[2], 2 * (t.one[0] + t.one[1] + t.one[2])), otp: t.otw - t.otl }));
+  T.forEach((t) => { t.pdo = t.shp + t.svp; });
+  $('season').textContent = D.season; $('n-played').textContent = D.played; $('n-left').textContent = D.left.toLocaleString('en-CA');
+  $('n-sims').textContent = $('m-sims').textContent = D.sims.toLocaleString('en-CA'); $('m-ot').textContent = D.ot;
+  let picked = hashTeam() || 'CGY';
+  const rank = (a, b) => b.pts - a.pts || a.gp - b.gp || b.rw - a.rw || b.w - a.w || b.diff - a.diff || a.code.localeCompare(b.code);
+
+  // The table
+  let view = 'wild';
+  // The league view has room for every column; the two-conference views keep to the essentials.
+  const head = (full) => '<thead><tr><th class="num"></th><th>Team</th><th class="num">GP</th><th class="num">W</th><th class="num">L</th><th class="num">OTL</th><th class="num">PTS</th>' +
+    (full ? '<th class="num sec">P%</th><th class="num sec">RW</th><th class="num sec">GF</th><th class="num sec">GA</th>' : '') + '<th class="num sec">Diff</th>' +
+    (full ? '<th class="sec">Home</th><th class="sec">Away</th>' : '') + '<th class="sec">L10</th>' + (full ? '<th class="sec">Strk</th>' : '') + '</tr></thead>';
+  const row = (t, i, cut, full) => `<tr class="${t.code === picked ? 'me' : ''}${cut ? ' cut' : ''}"><td class="num soft">${i}</td><td><b>${t.code}</b> <span class="soft wide">${esc(t.name)}</span></td>
+    <td class="num">${t.gp}</td><td class="num">${t.w}</td><td class="num">${t.l}</td><td class="num">${t.otl}</td><td class="num"><b>${t.pts}</b></td>` +
+    (full ? `<td class="num sec">${t.pp100.toFixed(3).replace(/^0/, '')}</td><td class="num sec">${t.rw}</td><td class="num sec">${t.gf}</td><td class="num sec">${t.ga}</td>` : '') +
+    `<td class="num sec ${cls(t.diff)}">${signed(t.diff)}</td>` + (full ? `<td class="sec">${rec(t.home)}</td><td class="sec">${rec(t.away)}</td>` : '') +
+    `<td class="sec">${rec(t.l10)}</td>` + (full ? `<td class="sec">${t.strk}</td>` : '') + '</tr>';
+  const block = (title, list, cutAt, full) => `<h3>${esc(title)}</h3><div class="scroll tall"><table${full ? '' : ' class="tight"'}>${head(full)}<tbody>${list.map((t, i) => row(t, i + 1, i + 1 === cutAt, full)).join('')}</tbody></table></div>`;
+  function drawTable() {
+    if (view === 'league') { $('tables').innerHTML = block('League', T.slice().sort(rank), 0, true); return; }
+    $('tables').innerHTML = '<div class="blocks">' + D.confs.map((cn, c) => {
+      const inConf = T.filter((t) => t.conf === c), divs = [...new Set(inConf.map((t) => t.div))].sort(), out = [], rest = [];
+      divs.forEach((d) => { const s = inConf.filter((t) => t.div === d).sort(rank);
+        if (view === 'div') out.push(block(D.divs[d], s, 3)); else { out.push(block(D.divs[d], s.slice(0, 3))); rest.push(...s.slice(3)); } });
+      if (view !== 'div') out.push(block(cn + ' wild card', rest.sort(rank), 2));
+      return '<div>' + out.join('') + '</div>';
+    }).join('') + '</div>';
+  }
+  $('view').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; view = b.dataset.v;
+    [...$('view').children].forEach((x) => x.setAttribute('aria-pressed', x === b)); drawTable(); });
+
+  // The race
+  const rs = {k: 'po', d: -1};
+  const p1 = (x) => x >= 99.95 ? '>99.9%' : x > 0 && x < 0.05 ? '<0.1%' : x.toFixed(1) + '%';
+  function drawRace() {
+    $('race-table').tBodies[0].innerHTML = T.slice().sort((a, b) => by(rs)(a, b) || b.proj - a.proj).map((t) => `<tr class="${t.code === picked ? 'me' : ''}">
+      <td><b>${t.code}</b> <span class="soft wide">${esc(t.name)}</span></td><td class="num">${t.pts}</td>
+      <td class="num"><b>${Math.round(t.proj)}</b> <span class="soft wide">${t.lo}–${t.hi}</span></td>
+      <td class="num"><b>${p1(t.po)}</b></td><td class="bar sec"><span class="meter"><i class="blue" style="width:${t.po}%"></i></span></td>
+      <td class="num sec">${p1(t.dv)}</td><td class="num">${t.first ? p1(t.first) : '<span class="soft">–</span>'}</td>
+      <td class="num sec ${cls(t.str)}">${signed(t.str, 2)}</td><td class="num sec">${signed(t.sosLeft, 2)}</td><td class="num sec">${t.homeLeft}<span class="soft">/${t.left}</span></td></tr>`).join('');
+  }
+  sortable($('race-table'), rs, drawRace);
+
+  // Under the hood
+  const hs = {k: 'cfp', d: -1};
+  const f1 = (x) => x.toFixed(1);
+  function drawHood() {
+    $('hood-table').tBodies[0].innerHTML = T.slice().sort(by(hs)).map((t) => `<tr class="${t.code === picked ? 'me' : ''}">
+      <td><b>${t.code}</b> <span class="soft wide">${esc(t.name)}</span></td><td class="num"><b>${f1(t.cfp)}%</b></td><td class="num sec">${f1(t.sfg)}</td><td class="num sec">${f1(t.sag)}</td>
+      <td class="num">${f1(t.shp)}</td><td class="num">${f1(t.svp)}</td><td class="num ${t.pdo >= 102 ? 'up' : t.pdo <= 98 ? 'down' : ''}">${f1(t.pdo)}</td>
+      <td class="num">${f1(t.pp)}</td><td class="num">${f1(t.pk)}</td><td class="num sec">${f1(t.fo)}%</td><td class="sec">${rec(t.one)}</td><td class="sec">${t.otw}–${t.otl}</td></tr>`).join('');
+  }
+  sortable($('hood-table'), hs, drawHood);
+
+  function drawAll() { drawTable(); drawRace(); drawHood(); }
+  fillTeams($('t-pick'), picked, D.names);
+  $('t-pick').addEventListener('change', (e) => { picked = e.target.value; setHashTeam(picked); drawAll(); });
+  addEventListener('hashchange', () => { const c = hashTeam(); if (c && c !== picked) { picked = c; $('t-pick').value = c; drawAll(); } });
+  drawAll();
+
+})();
+</script>
+</body>
+</html>
