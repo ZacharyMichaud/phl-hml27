@@ -28,7 +28,7 @@ Build command (reads every zip in `../saves/`, about a minute, and writes all si
 python build_report_cards.py
 ```
 
-From the 23 saves through Nov 2, 2027 this gives 8 combined deals, 215 deals and 433 ledger rows (2026-27: 169 deals; 2027-28: 46). The 341 rows before July 1, 2027 reproduce the old ledger exactly. The other tabs print one line each: 32 teams over 4 periods; 1,308 contracts through 2034-35; 224 games played and 1,120 to play; 599 skaters and 62 goalies in the NHL, 1,222 players in other leagues and 4 tables, with goals matching the standings for 32 of 32 teams; 3,318 rating changes over 6 monthly ticks and 1 summer rollover.
+From the 24 saves through Dec 2, 2027 this gives 9 combined deals, 219 deals and 441 ledger rows (2026-27: 169 deals; 2027-28: 50). The 341 rows before July 1, 2027 reproduce the old ledger exactly. The other tabs print one line each: 32 teams over 4 periods; 1,315 contracts through 2034-35; 438 games played and 906 to play; 626 skaters and 64 goalies in the NHL, 1,259 players in other leagues and 4 tables, with goals matching the standings for 32 of 32 teams; 3,864 rating changes over 7 monthly ticks and 1 summer rollover.
 
 ## How the ledger is built
 
@@ -55,7 +55,7 @@ All five read the newest save. Each page ends with a "How it works" section that
   - Later seasons count today's NHL roster and dead cap, with a signed `Extension` from the season it starts, against today's cap.
   - UFA or RFA at expiry is worked out, not read: UFA at `REQUIRED_UFA_AGE` (27) on July 1, or after `REQUIRED_UFA_SEASON_EXPERIENCE` (7) seasons since `RookieSeason`.
   - Clause type 4 is a no-trade list (`Teams`, from contract year `StartingYear`). Types 2 and 3 show as "Clause", since which one is the no-move isn't confirmed.
-  - On the Nov 2, 2027 save two teams sit over the cap (NSH by $4.5M, FLA by $1.1M). How the game enforces the cap in season isn't confirmed.
+  - On the Dec 2, 2027 save NSH sits $4.5M over the cap, as it did on Nov 2; FLA, $1.1M over then, is back under. How the game enforces the cap in season isn't confirmed.
 - **Standings** (`site_standings.py`).
   - The table comes from the save's game list and matches every team's own `Stats` line. Ties: fewer games played, regulation wins, wins, goal difference (the NHL's order; the game's isn't confirmed).
   - The race is a simulation, seeded by the save date so a rebuild gives the same numbers. Strength = the lineup's number (average overall of the 12 forwards, 6 defencemen and the starter against the league, weighted by `BETA`), pulled toward the goal difference so far (prior SD `PRIOR_SD`, game variance `GAME_VAR`). A home win has log-odds `HOME` + `SLOPE` x the strength gap; `OT_SHARE` of games give the loser a point. 10,000 seasons. Playoffs are the top three per division plus two wild cards per conference. "1st pick" applies the league's lottery odds to the 16 teams that miss, with a winner moving up at most `LotteryMaxMoveUp` spots; a winner seeded too low leaves first overall with the last-place team, as in the NHL.
@@ -127,7 +127,7 @@ A save is a zip. The live state is `<root>/dynamic/d0.hlm`, gzip-compressed JSON
 - Each asset's value at the trade (`vt` on a card move), built per side:
   - A pick's `_Value` carries the day it was computed in `CachedValueExpiration` (`Item1` day of the year, `Item2` year), so the save holding the value from the trade day gives it exactly (355 of 360 picks).
   - A player's is `Values["0"]` from the trade-day save, one that already holds the trade first, else the nearest save.
-  - The side is then made to add up to its `ValueOutSum`: the gap goes to its players, in proportion to their size. Single-asset sides are exact. From the 23 saves through Nov 2, 2027, 123 of 455 sides sent several assets that don't add up as is (the build prints them); their split is flagged `ve` and estimated.
+  - The side is then made to add up to its `ValueOutSum`: the gap goes to its players, in proportion to their size. Single-asset sides are exact. From the 24 saves through Dec 2, 2027, 124 of 467 sides sent several assets that don't add up as is (the build prints them); their split is flagged `ve` and estimated.
 - Value today: the latest cached value (see How the ledger is built). A player now a free agent or retired counts as 0. All 51 traded players now in free agency still carry a cached value, which the cards counted before Nov 9, 2026.
 
 ## Ratings
@@ -158,6 +158,7 @@ A save is a zip. The live state is `<root>/dynamic/d0.hlm`, gzip-compressed JSON
   - 3991: BUF 541/0, CHI 1964/2386, NYI 2386/2505
   - Until Nov 9, 2026 value in was a hand estimate (3931: BUF 455, OTT 170, TOR 553; 3942: BUF 203, DET 561; 3991: BUF 507, CHI 1998). The switch moved BUF from D- to D over all seasons, and for 2026-27 OTT from D to D- and TOR from C+ to C (3931 is now Even for TOR).
 - Open: OTT–VAN (DeMelo and Hamara swapped three times) and FLA–PIT (Verhaeghe and two 7ths back and forth) look like corrections. Each leg counts for now; ask Zachary before changing.
+- Open: PHI–CAR, Nov 2, 2027 (4109 Miller, 4112 Woll for Kerfoot, 4113 Thompson) is graded as one deal by the rule, since 4113 sends five players. Not yet confirmed with Zachary; if any was a separate deal, add its id to `KEEP_SEPARATE`.
 
 ## Next task
 
