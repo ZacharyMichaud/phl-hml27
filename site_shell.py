@@ -15,7 +15,7 @@ TEAM_NAMES = {"ANA": "Anaheim", "BOS": "Boston", "BUF": "Buffalo", "CAR": "Carol
 
 # (key, file, tab label). The first one is the default page; its key never appears in a link.
 PAGES = [("trades", "report.html", "Trades"), ("value", "value.html", "Team value"), ("cap", "cap.html", "Cap"),
-         ("standings", "standings.html", "Standings"), ("progression", "progression.html", "Progression")]
+         ("standings", "standings.html", "Standings"), ("stats", "stats.html", "Player stats"), ("progression", "progression.html", "Progression")]
 
 NAV_CSS = """
   .nav { display: flex; align-items: baseline; gap: 0 20px; margin: 0 0 22px; border-bottom: 1px solid var(--line); font-size: 14px; overflow-x: auto; scrollbar-width: none; }

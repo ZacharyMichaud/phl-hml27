@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Build the pages beside the trade report cards: team value, cap, standings and progression.
+"""Build the pages beside the trade report cards: team value, cap, standings, player stats and progression.
 
 Usage:
     python site_pages.py [--saves ../saves] [--only cap,standings] [--out .]
 
 build_report_cards.py runs this at the end of its own build and hands over the saves it has already
-read; run on its own, only the newest save is read, so the progression page has no summer rollover.
+read; run on its own, only the newest save is read, so the progression page has no summer rollover and
+the player stats of earlier seasons lack the players who have since retired.
 """
 import argparse
 import datetime
@@ -123,9 +124,10 @@ def build_all(newest, states=None, saves_dir=None, out_dir=".", only=None):
     import site_cap
     import site_progression
     import site_standings
+    import site_stats
     import site_value
     ctx = Ctx(newest, states, saves_dir, out_dir)
-    builders = {"value": site_value, "cap": site_cap, "standings": site_standings, "progression": site_progression}
+    builders = {"value": site_value, "cap": site_cap, "standings": site_standings, "stats": site_stats, "progression": site_progression}
     for key, fname, _ in site_shell.PAGES[1:]:
         if only and key not in only:
             continue
@@ -139,9 +141,9 @@ def build_all(newest, states=None, saves_dir=None, out_dir=".", only=None):
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="Build the team value, cap, standings and progression pages.")
+    ap = argparse.ArgumentParser(description="Build the team value, cap, standings, player stats and progression pages.")
     ap.add_argument("--saves", default=os.path.join("..", "saves"), help="folder of league save zips (default ../saves)")
-    ap.add_argument("--only", help="comma-separated pages to build: value, cap, standings, progression")
+    ap.add_argument("--only", help="comma-separated pages to build: value, cap, standings, stats, progression")
     ap.add_argument("--out", default=".", help="folder to write the pages to")
     a = ap.parse_args()
     build_all(newest_save(a.saves), saves_dir=a.saves, out_dir=a.out, only=set(a.only.split(",")) if a.only else None)

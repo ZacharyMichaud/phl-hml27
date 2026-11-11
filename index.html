@@ -11,7 +11,7 @@
   p { margin: 40px 16px; text-align: center; }
 </style>
 <script>
-  var files = {"value": "value.html", "cap": "cap.html", "standings": "standings.html", "progression": "progression.html"};
+  var files = {"value": "value.html", "cap": "cap.html", "standings": "standings.html", "stats": "stats.html", "progression": "progression.html"};
   var file = files[new URLSearchParams(location.search).get('p')] || 'report.html';
   fetch(file + '?v=' + Date.now(), {cache: 'no-store'})
     .then(function (r) { if (!r.ok) throw new Error(r.status); return r.text(); })
