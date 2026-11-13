@@ -21,20 +21,6 @@ def hits(c):
     return [round(c["Salaries"][passed + i] * edit) for i in range(c.get("Length") or 0) if passed + i < len(c["Salaries"])]
 
 
-def clause(ctx, c):
-    """(tag, hover text) for a contract's trade clause. Type 4 carries a no-trade list; 2 and 3 are full clauses."""
-    cl = c.get("Clause")
-    if not cl:
-        return None
-    year_now = (c.get("SeasonPassed") or 0) + 1
-    later = cl.get("StartingYear", 1) - year_now
-    when = f", from {ctx.season_label(later)}" if later > 0 else ""
-    if cl.get("Type") == 4:
-        teams = sorted(ctx.code.get(t, str(t)) for t in cl.get("Teams") or [] if t != -1)
-        return ["NTC", (f"No-trade list of {len(teams)} teams: {', '.join(teams)}" if teams else "No-trade list, teams not picked yet") + when]
-    return ["Clause", "No-move or full no-trade clause" + when]
-
-
 def build(ctx):
     lg, ufa_age, ufa_seasons = ctx.lg, ctx.sl.get("REQUIRED_UFA_AGE", 27), ctx.sl.get("REQUIRED_UFA_SEASON_EXPERIENCE", 7)
     teams, most = [], 1
@@ -57,9 +43,6 @@ def build(ctx):
                    "c": "NHL" if p.get("TeamId") == tid else (ctx.league_of.get(p.get("TeamId")) or "Other"), "h": h, "e": "UFA" if free else "RFA"}
             if ext:
                 row["x"] = len(now)
-            k = clause(ctx, c)
-            if k:
-                row["k"] = k
             players.append(row)
             most = max(most, len(h))
         dead = []
@@ -159,7 +142,6 @@ BODY = """
     <p><b>By the day.</b> The game charges the cap one day at a time over the <span id="m-len"></span>-day season. "Charged so far" is the game's own running total for the team; "On pace for" adds today's roster for every day that is left.</p>
     <p><b>Later seasons.</b> What today's NHL roster and dead cap already commit, with signed extensions counted from the season they start. They are set against today's cap, since next season's cap isn't known yet.</p>
     <p><b>Free agents.</b> A player is unrestricted at <span id="m-age"></span> or after seven NHL seasons, restricted otherwise. That is worked out here from the league's free-agency settings, not read from the game, so treat a borderline case with care.</p>
-    <p><b>Clauses.</b> NTC is a no-trade list; hover it for the teams. Clause is a no-move or a full no-trade clause.</p>
   </section>
 """
 
@@ -211,8 +193,7 @@ SCRIPT = r"""
       if (y < p.h.length) return `<td class="num${p.x != null && y >= p.x ? ' ext' : ''}">${money(p.h[y])}</td>`;
       return y === p.h.length && p.e ? `<td class="num"><span class="tag">${p.e}</span></td>` : '<td></td>';
     }).join('');
-    const k = p.k ? ` <span class="tag" title="${esc(p.k[1])}">${p.k[0]}</span>` : '';
-    return `<tr${out ? ' class="out"' : ''}><td class="who">${esc(p.n)}${k}${out ? ` <span class="tag">${esc(p.c)}</span>` : ''}</td><td class="sec">${p.pos || ''}</td><td class="num sec">${p.age || ''}</td><td class="num sec">${p.o || ''}</td>${cells}</tr>`;
+    return `<tr${out ? ' class="out"' : ''}><td class="who">${esc(p.n)}${out ? ` <span class="tag">${esc(p.c)}</span>` : ''}</td><td class="sec">${p.pos || ''}</td><td class="num sec">${p.age || ''}</td><td class="num sec">${p.o || ''}</td>${cells}</tr>`;
   }
   function drawTeam() {
     const t = byCode[picked];

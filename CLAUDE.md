@@ -54,7 +54,7 @@ All five read the newest save. Each page ends with a "How it works" section that
   - "Charged so far" is the team's `AccumulatedSalaryCap`; "On pace for" adds today's cap hit for the days left (`SeasonDayId` of `SeasonLenght`).
   - Later seasons count today's NHL roster and dead cap, with a signed `Extension` from the season it starts, against today's cap.
   - UFA or RFA at expiry is worked out, not read: UFA at `REQUIRED_UFA_AGE` (27) on July 1, or after `REQUIRED_UFA_SEASON_EXPERIENCE` (7) seasons since `RookieSeason`.
-  - Clause type 4 is a no-trade list (`Teams`, from contract year `StartingYear`). Types 2 and 3 show as "Clause", since which one is the no-move isn't confirmed.
+  - Trade clauses aren't shown (no-trade lists and types 2 and 3): they don't matter in the league (Zachary's call, Nov 13, 2026).
   - On the Dec 2, 2027 save NSH sits $4.5M over the cap, as it did on Nov 2; FLA, $1.1M over then, is back under. How the game enforces the cap in season isn't confirmed.
 - **Standings** (`site_standings.py`).
   - The table comes from the save's game list and matches every team's own `Stats` line. Ties: fewer games played, regulation wins, wins, goal difference (the NHL's order; the game's isn't confirmed).
