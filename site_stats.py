@@ -3,7 +3,8 @@
 Each player carries one _CareerStats line per season type, league and club: comma-separated numbers with no
 names. The columns were named by matching the 2026-27 lines against their named copies in pastathlete.hlm, and
 the NHL lines add up to every team's own totals. An earlier season is read from the last save of that season,
-which still has the players who retired after it.
+which still has the players who retired after it. A player who leaves the save during this season keeps his
+NHL line, read from the last save that held him.
 """
 import collections
 import datetime
@@ -69,6 +70,27 @@ def gather(players, lines_of, year):
     return out
 
 
+def departed(ctx, year):
+    """{player id: player} for those with games this season who are gone from the newest save, each from the last save that held him.
+
+    A player who retires or is dropped mid-season disappears from the PlayerList, and his goals with him, so his
+    team's players stop adding up to the team. Needs the older saves: run alone, site_pages.py finds nobody.
+    """
+    last = {}  # player id -> the last earlier save of this season that holds him (the states are in date order)
+    for s in ctx.states or []:
+        if s.get("year") == year and s["path"] != ctx.path:
+            for pid in s["players"]:
+                if pid not in ctx.PL:
+                    last[pid] = s["path"]
+    out = {}
+    for path in sorted(set(last.values())):
+        players = sp.read_full(path)["PlayerList"]
+        for pid, src in last.items():
+            if src == path and pid in players and any(season == year and typ in (0, 1) for _, typ, _, _, season, _ in csv_lines(players[pid])):
+                out[pid] = players[pid]
+    return out
+
+
 def save_rate(entries):
     """A league's save rate over every goalie in it, for goals saved above average."""
     sv = sum(e["n"][SV] for e in entries.values() if e["g"])
@@ -116,9 +138,20 @@ def build(ctx):
             sets.append(dict({"id": sid, "label": text, "nhl": True, "po": False, "cur": False, "sv": sv, "sk": sk, "go": go}, **flags))
 
     # This season: the NHL, its playoffs once they start, and NHL clubs' players in every other league.
+    # Players who left the save since the season began keep their NHL lines, with no rating or cap hit.
     now = gather(ctx.PL, lambda pid, p: csv_lines(p), year)
-    add(str(year), f"{label(year)} · NHL", *rows(ctx.PL, now.get((0, 0), {}), year, ctx.date, True), {"": save_rate(now.get((0, 0), {}))}, cur=True)
-    add(f"{year}p", f"{label(year)} · NHL playoffs", *rows(ctx.PL, now.get((1, 0), {}), year, ctx.date, True), {"": save_rate(now.get((1, 0), {}))}, cur=True, po=True)
+    gone = departed(ctx, year)
+    left = gather(gone, lambda pid, p: csv_lines(p), year)
+
+    def nhl(typ):
+        here, away = now.get((typ, 0), {}), left.get((typ, 0), {})
+        sk, go = rows(ctx.PL, here, year, ctx.date, True)
+        sk2, go2 = rows(gone, away, year, ctx.date, False)
+        return sk + sk2, go + go2, {"": save_rate({**here, **away})}
+
+    add(str(year), f"{label(year)} · NHL", *nhl(0), cur=True)
+    add(f"{year}p", f"{label(year)} · NHL playoffs", *nhl(1), cur=True, po=True)
+    kept = len(left.get((0, 0), {})) + len(left.get((1, 0), {}))
     sk, go, rates = [], [], {}
     for (typ, lid), entries in now.items():
         if typ == 0 and lid != 0:
@@ -148,7 +181,7 @@ def build(ctx):
 
     # Check: this season's NHL goals, club by club, against each team's own line.
     goals = collections.Counter()
-    for p in ctx.PL.values():
+    for p in list(ctx.PL.values()) + list(gone.values()):
         for goalie, typ, league, club, season, nums in csv_lines(p):
             if not goalie and typ == 0 and league == 0 and season == year:
                 goals[club] += nums[GOALS]
@@ -163,7 +196,8 @@ def build(ctx):
     return site_shell.page("stats", "PHL player stats", "Every skater's and goalie's numbers in the HLM27 league: scoring, rates, on-ice results and cost per point.",
                            BODY, data, SCRIPT, CSS), \
         (f"{len(first['sk'])} skaters and {len(first['go'])} goalies in {first.get('label', 'no season')}, {others} players in other leagues, "
-         f"{len(sets)} tables; goals match the standings for {len(code) - len(off)} of {len(code)} teams{note}")
+         f"{len(sets)} tables; goals match the standings for {len(code) - len(off)} of {len(code)} teams"
+         f"{f'; {kept} NHL line(s) kept for players who left the save this season' if kept else ''}{note}")
 
 
 CSS = """
@@ -218,7 +252,7 @@ BODY = """
 
   <section id="method" class="method">
     <div class="head"><h2>How it works</h2></div>
-    <p><b>The numbers.</b> Each player's season line as the league save holds it: the same totals the game's own stats screens show, and the NHL lines add up to every team's goals, shots and record. A traded player gets one line for the season, with every team he played for. Age is today's for this season, and on February 1 for an earlier one.</p>
+    <p><b>The numbers.</b> Each player's season line as the league save holds it: the same totals the game's own stats screens show, and the NHL lines add up to every team's goals, shots and record. A traded player gets one line for the season, with every team he played for. A player who retires or leaves the league during the season keeps his line, with no rating or cap hit. Age is today's for this season, and on February 1 for an earlier one.</p>
     <p><b>Rates.</b> Per 60 uses all of his ice time, at any strength. P/<span class="m-games"></span> is his points per game over <span class="m-games"></span> games. A1 is primary assists, and P1 is goals plus primary assists. Rates and Value open at a minimum number of games so that one good night doesn't top the list; change it with Minimum.</p>
     <p><b>On ice.</b> GF and GA are the goals scored while he was on the ice, power-play goals left out; +/− is the difference and GF% his team's share. CF and CA are shot attempts at even strength while he was on the ice, CF% his team's share.</p>
     <p><b>Physical.</b> The game gives every penalty two minutes, so PIM is twice his penalties. Pen ± is penalties drawn less penalties taken. FO% shows for players who take at least four faceoffs a game.</p>

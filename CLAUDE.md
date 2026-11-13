@@ -28,7 +28,7 @@ Build command (reads every zip in `../saves/`, about a minute, and writes all si
 python build_report_cards.py
 ```
 
-From the 25 saves through Jan 2, 2028 this gives 8 combined deals, 225 deals and 453 ledger rows (2026-27: 169 deals; 2027-28: 56). The 341 rows before July 1, 2027 reproduce the old ledger exactly. The other tabs print one line each: 32 teams over 4 periods; 1,318 contracts through 2034-35; 663 games played and 681 to play; 634 skaters and 65 goalies in the NHL, 1,292 players in other leagues and 4 tables, with goals matching the standings for 31 of 32 teams; 4,219 rating changes over 8 monthly ticks and 1 summer rollover. The one team short is NYR, by one goal: B. Bradford (2 GP, 1 goal) left the save in December, and the page only recovers such players for past seasons (see Player stats), so the build prints a `CHECK:` line for NYR until that is handled.
+From the 25 saves through Jan 2, 2028 this gives 8 combined deals, 225 deals and 453 ledger rows (2026-27: 169 deals; 2027-28: 56). The 341 rows before July 1, 2027 reproduce the old ledger exactly. The other tabs print one line each: 32 teams over 4 periods; 1,318 contracts through 2034-35; 663 games played and 681 to play; 635 skaters and 65 goalies in the NHL (one skater kept after leaving the save), 1,292 players in other leagues and 4 tables, with goals matching the standings for 32 of 32 teams; 4,219 rating changes over 8 monthly ticks and 1 summer rollover.
 
 ## How the ledger is built
 
@@ -65,6 +65,7 @@ All five read the newest save. Each page ends with a "How it works" section that
   - The Season menu lists this season's NHL table, its playoffs once they start, this season's other leagues, then each earlier season since `FIRST_SEASON` (2026) with its playoffs. A table with no games is left out, so in September the page opens on last season.
   - Other leagues: only players whose NHL rights a team holds today (`TeamIds["0"]`), one line per league. Team is that NHL team, and Club is the club's name as the save has it.
   - An earlier season is read from the last save of that season (the saves' `Year`), which still has the players who retired after it: 7 skaters after 2026-27. Run alone, `site_pages.py` has no older saves and falls back to `pastathlete.hlm`, which lacks them (669 skaters instead of 676).
+  - A player who leaves the save during this season (retired, or dropped by the game: the PlayerList loses him) keeps his NHL line, read from the last save of the season that held him, with no overall or cap hit (`departed` in `site_stats.py`, added Nov 13, 2026). Without it his team's goals stop matching the standings: B. Bradford (NYR, 2 GP, 1 goal, gone in December 2027) was the first. It needs the older saves, so `site_pages.py` run alone can't do it and prints the `CHECK:` line.
   - A traded player gets one line for the season, his teams joined (`CAR/MIN`); the team filter matches any of them.
   - Worked out on the page from the totals:
     - Per 60 uses all ice time. P/84 is points per game over `GamesPerSeason` (84 in this league).
