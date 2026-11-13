@@ -97,6 +97,7 @@ A save is a zip. The live state is `<root>/dynamic/d0.hlm`, gzip-compressed JSON
 - `Leagues["0"]` also has `HardSalaryCap`, `SeasonDayId` (days into the season) and `ConfigOrDefault` (`SeasonLenght`, `GamesPerSeason`, `MaxContract`, `LotteryOdds` in thousandths, `LotteryMaxMoveUp`).
 - `SportLeague.PlayerList`, keyed by player id (string):
   - `FirstName`, `LastName`, `$type` (Skater or Goalie), `Positions` (0 LW, 1 C, 2 RW, 3 LD, 4 RD, 5 G), `_PlayerType`, `BaseOffense`, `BaseDefense`, `Birthday` (days since 1970-01-01).
+  - `AttributeBoost.Value`: the temporary modifier on the overall the game shows (see Ratings). Missing means none.
   - `TeamIds["0"]`: NHL organization; 100 is the free-agent pool.
   - `Contract`: `Salaries` are flat, so `Salaries[0]` is the cap hit, times `Edit` where the contract has one under 1 (see The other tabs). `Length` counts seasons left including the current or upcoming one; `SeasonPassed` is how far into `Salaries` the contract is. A `LeagueId` means a non-NHL deal (college, junior, Europe, AHL-only). `Extension` is a signed extension, starting when the contract ends. `Clause` is `{Type, StartingYear, Teams}`.
   - `TeamId`: the club the player is on now, in any league. It equals `TeamIds["0"]` when he is on the NHL roster. `RookieSeason["0"]`: his first NHL season.
@@ -133,9 +134,12 @@ A save is a zip. The live state is `<root>/dynamic/d0.hlm`, gzip-compressed JSON
 
 ## Ratings
 
-- `OVR = round(w * BaseOffense + (1 - w) * BaseDefense)`, with halves rounding to even (Python `round`). Goalies use `BaseDefense`.
+- The rating underneath: `round(w * BaseOffense + (1 - w) * BaseDefense)`, with halves rounding to even (Python `round`). Goalies use `BaseDefense`.
   - `w` by (position group, `_PlayerType` or 0): F1 .70, F2 .70, F7 .60, F0 .30, F3 .35, D4 .50, D5 .65, D6 .25.
-  - This matches the game's own overall in the progression mails for 98% of players.
+- The overall the game shows (OVR) adds a temporary modifier: `AttributeBoost.Value` on the player, a hot or cold streak (±1 or 2) or playing hurt. 220 players carried one on Jan 2, 2028 (Pulock showed 84 on a rating of 85). The progression mails carry the shown number: rating plus modifier matches every mail in the Nov 2, 2027, Dec 2 and Jan 2, 2028 saves, where the rating alone missed one (C. Warren, 69 on a rating of 70). Use `Value`; its parts (`_performanceAttribute`, `_temporaryInjuryAttribute`) don't always add up to it.
+- Which number each page uses (since Nov 13, 2026):
+  - The shown OVR (`shown()` in `site_pages.py` and `build_report_cards.py`): the Cap and Player stats tabs, and on the trade cards and ledger the overall today. The overall at the trade adds the modifier only when a save from the trade day exists, since no other day records it.
+  - The rating underneath (`overall()`): the overall-at-the-trade history (snapshots plus the mails' ticks), the Progression tab's summer rollover, and the Standings race, so a streak doesn't count as progression or move the projection. The Progression tab's monthly rows come straight from the mails, so they show the shown number.
 - Ratings change only at the monthly ticks (+1 or +2), plus the odd point after training. On a tick day, the tick lands before that day's trades.
 - The build works out the overall on any date from the nearest earlier save plus the mails. Do not trust the old workbook's overalls; 92 of them were a point off.
 - Age regression happens only at the season rollover: in the official saves, 44 of the league's 112 players aged 34 or older lost 1 or 2 points there.

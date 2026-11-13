@@ -124,7 +124,7 @@ def build(ctx):
                 lg, club, rookie = league.get("Abbreviation") or "?", " / ".join(club_name(league, c) for c in e["clubs"]), 0
             c = site_cap.nhl_contract(p) if current and league_id == 0 else None
             h = site_cap.hits(c) if c else []
-            tail = [sp.age_on(p, on), rookie, lg, club, sp.overall(p) if current else None, h[0] if h else None] + e["n"]
+            tail = [sp.age_on(p, on), rookie, lg, club, sp.shown(p) if current else None, h[0] if h else None] + e["n"]
             if e["g"]:
                 go.append([sp.full_name(p), team] + tail)
             else:
@@ -256,7 +256,7 @@ BODY = """
     <p><b>Rates.</b> Per 60 uses all of his ice time, at any strength. P/<span class="m-games"></span> is his points per game over <span class="m-games"></span> games. A1 is primary assists, and P1 is goals plus primary assists. Rates and Value open at a minimum number of games so that one good night doesn't top the list; change it with Minimum.</p>
     <p><b>On ice.</b> GF and GA are the goals scored while he was on the ice, power-play goals left out; +/− is the difference and GF% his team's share. CF and CA are shot attempts at even strength while he was on the ice, CF% his team's share.</p>
     <p><b>Physical.</b> The game gives every penalty two minutes, so PIM is twice his penalties. Pen ± is penalties drawn less penalties taken. FO% shows for players who take at least four faceoffs a game.</p>
-    <p><b>Value.</b> Cap hit is this season's, and OVR is today's rating. $/point is the cap hit divided by his points over <span class="m-games"></span> games: what a point costs at his scoring pace. It says nothing about his defence.</p>
+    <p><b>Value.</b> Cap hit is this season's, and OVR is the rating the game shows today, a hot or cold streak included. $/point is the cap hit divided by his points over <span class="m-games"></span> games: what a point costs at his scoring pace. It says nothing about his defence.</p>
     <p><b>Goalies.</b> L is losses in regulation. GSAA is goals saved above average: the goals the league's average goalie would have allowed on the same shots, less the goals he allowed. The save percentage leader needs a third of the busiest goalie's games.</p>
     <p><b>Rookies.</b> R marks a player in his first NHL season, as the game counts it.</p>
     <p><b>Other leagues.</b> Players whose NHL rights a club holds today, in the league they are playing in. Team is that NHL club. GSAA there is against every goalie in that league.</p>

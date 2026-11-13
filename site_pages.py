@@ -62,6 +62,13 @@ def overall(p):
     return int(q) + (1 if r > Fraction(1, 2) or (r == Fraction(1, 2) and q % 2) else 0)
 
 
+def shown(p):
+    """The overall the game shows today: overall() plus the temporary modifier the game adds for a hot or cold streak
+    or for playing hurt (AttributeBoost.Value). The progression mails carry the same number. overall() alone is the
+    rating underneath, which is what progression and the race model use."""
+    return overall(p) + ((p.get("AttributeBoost") or {}).get("Value") or 0)
+
+
 def age_on(p, day):
     b = EPOCH + datetime.timedelta(days=p["Birthday"])
     return day.year - b.year - ((day.month, day.day) < (b.month, b.day))

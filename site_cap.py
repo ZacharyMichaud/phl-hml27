@@ -53,7 +53,7 @@ def build(ctx):
             end = datetime.date(ctx.season0 + len(h), 7, 1)  # the July 1 the last signed season runs out
             rookie = (p.get("RookieSeason") or {}).get("0") or 0
             free = sp.age_on(p, end) >= ufa_age or (rookie and end.year - rookie >= ufa_seasons)
-            row = {"n": sp.full_name(p), "pos": sp.positions(p), "age": sp.age_on(p, ctx.date), "o": sp.overall(p), "g": sp.group(p),
+            row = {"n": sp.full_name(p), "pos": sp.positions(p), "age": sp.age_on(p, ctx.date), "o": sp.shown(p), "g": sp.group(p),
                    "c": "NHL" if p.get("TeamId") == tid else (ctx.league_of.get(p.get("TeamId")) or "Other"), "h": h, "e": "UFA" if free else "RFA"}
             if ext:
                 row["x"] = len(now)

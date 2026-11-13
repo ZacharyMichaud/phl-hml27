@@ -80,6 +80,9 @@ GM_NAMES = {}
 # from completed training and the season rollover. Those mails sit in every save, so
 # the overall on any date is the nearest earlier save's overall plus the changes
 # reported up to that date. On a tick day the tick lands before that day's trades.
+# The game shows that rating plus a temporary modifier (a hot or cold streak, or
+# playing hurt; see shown()), which only a save records, so the card adds it when a
+# save from the trade day exists.
 TRADE_MARKUP_FROM_PARTICIPANT = 1
 POSITIONS = {0: "LW", 1: "C", 2: "RW", 3: "LD", 4: "RD", 5: "G"}
 JUNIOR, COLLEGE = {"2", "3", "4"}, {"5", "6", "7", "8", "9", "10"}
@@ -107,6 +110,9 @@ def read_save(path):
     players = {}
     for pid, p in sl["PlayerList"].items():
         q = {k: p[k] for k in PLAYER_KEYS if k in p}
+        boost = (p.get("AttributeBoost") or {}).get("Value")
+        if boost:
+            q["Boost"] = boost  # the temporary modifier on the overall the game shows (see shown())
         c = p.get("Contract")
         if c:
             q["Contract"] = {k: c[k] for k in ("LeagueId", "Salaries", "Length") if k in c}
@@ -146,6 +152,12 @@ def overall(p):
         return round(p.get("BaseDefense", 0))
     w = OVR_WEIGHTS.get((g, p.get("_PlayerType") or 0), 50)
     return round((w * p.get("BaseOffense", 0) + (100 - w) * p.get("BaseDefense", 0)) / 100)
+
+
+def shown(p):
+    """The overall the game shows on the save's day: overall() plus the temporary modifier the game adds for a hot or cold
+    streak or for playing hurt (AttributeBoost.Value). overall() alone is the rating underneath, which the mails' ticks move."""
+    return overall(p) + (p.get("Boost") or 0)
 
 
 def season_of(day):
@@ -359,7 +371,7 @@ def trade_rows(tid, t):
         for nm, a in zip(p["PlayersName"], p["PlayersId"]):
             pid = str(a["Athlete"])
             q = PL.get(pid)
-            text = nm + (f" ({overall(q)}, {age_on(q, state['day'])})" if q else "")
+            text = nm + (f" ({shown(q)}, {age_on(q, state['day'])})" if q else "")
             if pid in kept:
                 text += f" [sender keeps {kept[pid]}% of salary]"
             got[a.get("TeamIndex", 0)].append((text, "p", i, at_trade.get((i, "p", pid), 0)))
@@ -517,7 +529,7 @@ def build_cards(deal_ids):
                     e["x"] = "ret"
                 else:
                     org_id = (p.get("TeamIds") or {}).get("0")
-                    e.update({"age": age_on(p, state["day"]), "ovr": overall(p), "v": value_now(pid)})
+                    e.update({"age": age_on(p, state["day"]), "ovr": shown(p), "v": value_now(pid)})
                     if org_id in code:
                         e["org"], e["con"] = code[org_id], contract(p)
                     else:
@@ -538,10 +550,13 @@ def build_cards(deal_ids):
         return "k:" + kid
 
     def then(m, pid, day):
-        """Overall and age on the trade day."""
+        """Overall and age on the trade day. The overall is the one the game showed: the rating underneath, plus the
+        temporary modifier when a save from that day says what it was (no other day records it)."""
         src = PL.get(pid) or next((pl[pid] for _, pl in reversed(snaps) if pid in pl), None)
         if src is not None:
-            m["ot"], m["at"] = ovr_on(pid, day), age_on(src, day)
+            o = ovr_on(pid, day)
+            same = next((pl[pid] for d, pl in reversed(snaps) if d == day and pid in pl), None)
+            m["ot"], m["at"] = (o + (same.get("Boost") or 0) if o is not None and same else o), age_on(src, day)
 
     def from_history(tid):
         t = history[tid]
