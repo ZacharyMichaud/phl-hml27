@@ -62,7 +62,8 @@ EXTRA_MERGES = []
 # the two 7ths swapped back (Sept 18 and Oct 6, 2027); and offer sheets, entered as the player for nothing
 # (MTL to MIN, July 9, 2027).
 WAIVER_CLAIMS = {"4075", "4076", "4077", "4078", "4079", "4080", "4081", "4082", "4083", "4084", "4085", "4086",
-                 "4096", "4097", "4098", "4099", "4100", "4101", "4102", "4103", "4104", "4105", "4106", "4107"}
+                 "4096", "4097", "4098", "4099", "4100", "4101", "4102", "4103", "4104", "4105", "4106", "4107",
+                 "4117", "4118"}
 OFFER_SHEETS = {"4069", "4070", "4071"}
 # A trade counts as Even when its balance, net value / total value moved, is
 # within this band either way: close enough that both sides' AI GMs would take it.

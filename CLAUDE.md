@@ -28,13 +28,13 @@ Build command (reads every zip in `../saves/`, about a minute, and writes all si
 python build_report_cards.py
 ```
 
-From the 24 saves through Dec 2, 2027 this gives 8 combined deals, 221 deals and 445 ledger rows (2026-27: 169 deals; 2027-28: 52). The 341 rows before July 1, 2027 reproduce the old ledger exactly. The other tabs print one line each: 32 teams over 4 periods; 1,315 contracts through 2034-35; 438 games played and 906 to play; 626 skaters and 64 goalies in the NHL, 1,259 players in other leagues and 4 tables, with goals matching the standings for 32 of 32 teams; 3,864 rating changes over 7 monthly ticks and 1 summer rollover.
+From the 25 saves through Jan 2, 2028 this gives 8 combined deals, 225 deals and 453 ledger rows (2026-27: 169 deals; 2027-28: 56). The 341 rows before July 1, 2027 reproduce the old ledger exactly. The other tabs print one line each: 32 teams over 4 periods; 1,318 contracts through 2034-35; 663 games played and 681 to play; 634 skaters and 65 goalies in the NHL, 1,292 players in other leagues and 4 tables, with goals matching the standings for 31 of 32 teams; 4,219 rating changes over 8 monthly ticks and 1 summer rollover. The one team short is NYR, by one goal: B. Bradford (2 GP, 1 goal) left the save in December, and the page only recovers such players for past seasons (see Player stats), so the build prints a `CHECK:` line for NYR until that is handled.
 
 ## How the ledger is built
 
 - Trades: the union of every save's `TradeHistory` (it resets at the season rollover), plus trades only the `DailyTradeRecapMailArgs` mails still hold (e.g. #4067, July 3, 2027).
 - Waiver claims and offer sheets are entered in the game as trades but aren't trades, so the build leaves them out (`WAIVER_CLAIMS`, `OFFER_SHEETS`; confirmed by Zachary, Nov 9, 2026):
-  - A waiver claim is the player plus the waiving team's 7th for the claiming team's 7th, then the two 7ths swapped back. Sept 18, 2027 (#4075 to #4086): Hunt FLA→COL, Gudas FLA→EDM, Balinskis FLA→SEA, Cole and Hart OTT→COL, Gaudreau SEA→COL. Oct 6, 2027 (#4096 to #4107): Primeau CAR→NYI, Jarry CGY→FLA, Pachal CGY→NYI, George NYI→CGY, Struble NYI→NYR, Benoît PHI→NYI.
+  - A waiver claim is the player plus the waiving team's 7th for the claiming team's 7th, then the two 7ths swapped back. Sept 18, 2027 (#4075 to #4086): Hunt FLA→COL, Gudas FLA→EDM, Balinskis FLA→SEA, Cole and Hart OTT→COL, Gaudreau SEA→COL. Oct 6, 2027 (#4096 to #4107): Primeau CAR→NYI, Jarry CGY→FLA, Pachal CGY→NYI, George NYI→CGY, Struble NYI→NYR, Benoît PHI→NYI. Dec 2, 2027 (#4117 and #4118): Sissons NYI→VAN (confirmed Nov 13, 2026).
   - An offer sheet is the player for nothing: McKown, Samson and Jack Smith, MTL→MIN, July 9, 2027 (#4069 to #4071).
   - Gustavsson LAK→NYI (#4062+4063, July 2, 2027) is entered like a claim but was a trade. It sits in `CHECKED_TRADES` with the OTT–VAN and FLA–PIT legs (see Open, below).
   - The build prints a `CHECK:` line for any other same-day group where a pick goes out and comes back, or a side sends nothing.
@@ -127,7 +127,7 @@ A save is a zip. The live state is `<root>/dynamic/d0.hlm`, gzip-compressed JSON
 - Each asset's value at the trade (`vt` on a card move), built per side:
   - A pick's `_Value` carries the day it was computed in `CachedValueExpiration` (`Item1` day of the year, `Item2` year), so the save holding the value from the trade day gives it exactly (355 of 360 picks).
   - A player's is `Values["0"]` from the trade-day save, one that already holds the trade first, else the nearest save.
-  - The side is then made to add up to its `ValueOutSum`: the gap goes to its players, in proportion to their size. Single-asset sides are exact. From the 24 saves through Dec 2, 2027, 124 of 467 sides sent several assets that don't add up as is (the build prints them); their split is flagged `ve` and estimated.
+  - The side is then made to add up to its `ValueOutSum`: the gap goes to its players, in proportion to their size. Single-asset sides are exact. From the 25 saves through Jan 2, 2028, 128 of 475 sides sent several assets that don't add up as is (the build prints them); their split is flagged `ve` and estimated.
 - Value today: the latest cached value (see How the ledger is built). A player now a free agent or retired counts as 0. All 51 traded players now in free agency still carry a cached value, which the cards counted before Nov 9, 2026.
 
 ## Ratings
