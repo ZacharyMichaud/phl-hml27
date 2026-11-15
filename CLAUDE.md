@@ -28,13 +28,13 @@ Build command (reads every zip in `../saves/`, about a minute, and writes all si
 python build_report_cards.py
 ```
 
-From the 25 saves through Jan 2, 2028 this gives 8 combined deals, 225 deals and 453 ledger rows (2026-27: 169 deals; 2027-28: 56). The 341 rows before July 1, 2027 reproduce the old ledger exactly. The other tabs print one line each: 32 teams over 4 periods; 1,318 contracts through 2034-35; 663 games played and 681 to play; 635 skaters and 65 goalies in the NHL (one skater kept after leaving the save), 1,292 players in other leagues and 4 tables, with goals matching the standings for 32 of 32 teams; 4,219 rating changes over 8 monthly ticks and 1 summer rollover.
+From the 26 saves through Feb 2, 2028 this gives 8 combined deals, 230 deals and 463 ledger rows (2026-27: 169 deals; 2027-28: 61). The 341 rows before July 1, 2027 reproduce the old ledger exactly. The other tabs print one line each: 32 teams over 4 periods; 1,320 contracts through 2034-35; 894 games played and 450 to play; 655 skaters and 66 goalies in the NHL (two kept after leaving the save), 1,318 players in other leagues and 4 tables, with goals matching the standings for 32 of 32 teams; 4,479 rating changes over 9 monthly ticks and 1 summer rollover.
 
 ## How the ledger is built
 
 - Trades: the union of every save's `TradeHistory` (it resets at the season rollover), plus trades only the `DailyTradeRecapMailArgs` mails still hold (e.g. #4067, July 3, 2027).
 - Waiver claims and offer sheets are entered in the game as trades but aren't trades, so the build leaves them out (`WAIVER_CLAIMS`, `OFFER_SHEETS`; confirmed by Zachary, Nov 9, 2026):
-  - A waiver claim is the player plus the waiving team's 7th for the claiming team's 7th, then the two 7ths swapped back. Sept 18, 2027 (#4075 to #4086): Hunt FLA→COL, Gudas FLA→EDM, Balinskis FLA→SEA, Cole and Hart OTT→COL, Gaudreau SEA→COL. Oct 6, 2027 (#4096 to #4107): Primeau CAR→NYI, Jarry CGY→FLA, Pachal CGY→NYI, George NYI→CGY, Struble NYI→NYR, Benoît PHI→NYI. Dec 2, 2027 (#4117 and #4118): Sissons NYI→VAN (confirmed Nov 13, 2026).
+  - A waiver claim is the player plus the waiving team's 7th for the claiming team's 7th, then the two 7ths swapped back. Sept 18, 2027 (#4075 to #4086): Hunt FLA→COL, Gudas FLA→EDM, Balinskis FLA→SEA, Cole and Hart OTT→COL, Gaudreau SEA→COL. Oct 6, 2027 (#4096 to #4107): Primeau CAR→NYI, Jarry CGY→FLA, Pachal CGY→NYI, George NYI→CGY, Struble NYI→NYR, Benoît PHI→NYI. Dec 2, 2027 (#4117 and #4118): Sissons NYI→VAN (confirmed Nov 13, 2026). Jan 2, 2028 (#4125 and #4126): Benoît and Stolarz NYI→PHI, two claims chained, the second sending the 7ths back (confirmed Nov 15, 2026).
   - An offer sheet is the player for nothing: McKown, Samson and Jack Smith, MTL→MIN, July 9, 2027 (#4069 to #4071).
   - Gustavsson LAK→NYI (#4062+4063, July 2, 2027) is entered like a claim but was a trade. It sits in `CHECKED_TRADES` with the OTT–VAN and FLA–PIT legs (see Open, below).
   - The build prints a `CHECK:` line for any other same-day group where a pick goes out and comes back, or a side sends nothing.

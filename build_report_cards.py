@@ -59,11 +59,11 @@ KEEP_SEPARATE = {"3837", "3972", "4049", "4042", "4113"}
 EXTRA_MERGES = []
 # Moves the league enters in the game as trades but that are not trades, so they are left out (confirmed by
 # Zachary): waiver claims, entered as the player plus the waiving team's 7th for the claiming team's 7th, then
-# the two 7ths swapped back (Sept 18 and Oct 6, 2027); and offer sheets, entered as the player for nothing
-# (MTL to MIN, July 9, 2027).
+# the two 7ths swapped back (Sept 18, Oct 6 and Dec 2, 2027; on Jan 2, 2028 PHI claimed two NYI players, the
+# second claim sending the 7ths back); and offer sheets, entered as the player for nothing (MTL to MIN, July 9, 2027).
 WAIVER_CLAIMS = {"4075", "4076", "4077", "4078", "4079", "4080", "4081", "4082", "4083", "4084", "4085", "4086",
                  "4096", "4097", "4098", "4099", "4100", "4101", "4102", "4103", "4104", "4105", "4106", "4107",
-                 "4117", "4118"}
+                 "4117", "4118", "4125", "4126"}
 OFFER_SHEETS = {"4069", "4070", "4071"}
 # A trade counts as Even when its balance, net value / total value moved, is
 # within this band either way: close enough that both sides' AI GMs would take it.
