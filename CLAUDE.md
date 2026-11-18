@@ -28,7 +28,7 @@ Build command (reads every zip in `../saves/`, about a minute, and writes all si
 python build_report_cards.py
 ```
 
-From the 26 saves through Feb 2, 2028 this gives 8 combined deals, 230 deals and 463 ledger rows (2026-27: 169 deals; 2027-28: 61). The 341 rows before July 1, 2027 reproduce the old ledger exactly. The other tabs print one line each: 32 teams over 4 periods; 1,320 contracts through 2034-35; 894 games played and 450 to play; 655 skaters and 66 goalies in the NHL (two kept after leaving the save), 1,318 players in other leagues and 4 tables, with goals matching the standings for 32 of 32 teams; 4,479 rating changes over 9 monthly ticks and 1 summer rollover.
+From the 27 saves through Feb 29, 2028 this gives 8 combined deals, 236 deals and 475 ledger rows (2026-27: 169 deals; 2027-28: 67). The 341 rows before July 1, 2027 reproduce the old ledger exactly. The other tabs print one line each: 32 teams over 4 periods; 1,322 contracts through 2034-35; 1,096 games played and 248 to play; 673 skaters and 67 goalies in the NHL (8 lines kept for players who left the save this season), 1,347 players in other leagues and 4 tables, with goals matching the standings for 32 of 32 teams; 4,479 rating changes over 9 monthly ticks and 1 summer rollover (no tick between the Feb 2 and Feb 29 saves).
 
 ## How the ledger is built
 
