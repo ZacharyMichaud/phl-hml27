@@ -98,6 +98,10 @@ def build(ctx):
     for i, r in enumerate(rows):
         confs.setdefault(r["conf"], {}).setdefault(r["div"], []).append(i)
     cfg = lg["ConfigOrDefault"]
+    # PlayoffsFormat 1 is the NHL's: the top three in each division, then two wild cards per conference (2026-27).
+    # 3 is the top eight in each conference on points, seeded 1 v 8 (from 2027-28: the game's first 2028 bracket).
+    by_conf = cfg.get("PlayoffsFormat") == 3
+    per_conf = (cfg.get("PlayoffsTeams") or 16) // max(1, len(confs))
     odds = [o / 1000 for o in cfg.get("LotteryOdds") or []]
     reach = (cfg.get("LotteryMaxMoveUp") or 10) + 1  # the lowest lottery seed that can still move up to first
     lot = [o if r < reach else 0.0 for r, o in enumerate(odds)]
@@ -126,13 +130,17 @@ def build(ctx):
             for div in divs.values():
                 order = sorted(div, key=key.__getitem__, reverse=True)
                 div_won[order[0]] += 1
+                if by_conf:
+                    rest += order
+                    continue
                 for i in order[:3]:
                     made[i] += 1
                 rest += order[3:]
             rest.sort(key=key.__getitem__, reverse=True)
-            for i in rest[:2]:
+            take = per_conf if by_conf else 2
+            for i in rest[:take]:
                 made[i] += 1
-            out += rest[2:]
+            out += rest[take:]
         out.sort(key=key.__getitem__)
         for r, i in enumerate(out):
             if r < len(lot):
@@ -155,7 +163,7 @@ def build(ctx):
                  sosPlayed=round(statistics.mean(mean[j] for j in faced[i]), 2) if faced[i] else 0)
     data = dict(ctx.base(), teams=rows, confs=[c.get("Name", "") for c in lg["Conferences"]], divs=[d.get("Name", "") for d in lg["Divisions"]],
                 played=len(played), left=len(todo), sims=sims, season=ctx.season_label(), ot=round(100 * OT_SHARE, 1),
-                lottery=[round(100 * x, 1) for x in lot])
+                lottery=[round(100 * x, 1) for x in lot], byConf=per_conf if by_conf else 0)
     return site_shell.page("standings", "PHL standings", "Standings, shot share, luck and the playoff race in the HLM27 league.", BODY, data, SCRIPT, CSS), \
         f"{len(played)} games played, {len(todo)} to play, {sims:,} simulated seasons"
 
@@ -178,9 +186,9 @@ BODY = """
 
   <section id="table">
     <div class="head"><h2>The table</h2>
-      <span class="seg" id="view"><button type="button" data-v="wild" aria-pressed="true">Wild card</button><button type="button" data-v="div" aria-pressed="false">Division</button><button type="button" data-v="league" aria-pressed="false">League</button></span></div>
+      <span class="seg" id="view"><button type="button" data-v="wild" aria-pressed="true" id="v-wild">Wild card</button><button type="button" data-v="div" aria-pressed="false">Division</button><button type="button" data-v="league" aria-pressed="false">League</button></span></div>
     <div id="tables"></div>
-    <p class="note" style="margin-top:10px">The line is the playoff cut: the top three in each division, then two wild cards per conference.</p>
+    <p class="note" style="margin-top:10px" id="cut-note">The line is the playoff cut: the top three in each division, then two wild cards per conference.</p>
   </section>
 
   <section id="race">
@@ -229,10 +237,10 @@ BODY = """
 
   <section id="method" class="method">
     <div class="head"><h2>How it works</h2></div>
-    <p><b>The table.</b> Built from every regular-season game in the save: two points for a win, one for an overtime loss. Teams level on points are split by fewer games played, then regulation wins, wins and goal difference, the NHL's order; the game's own order isn't confirmed.</p>
+    <p><b>The table.</b> Built from every regular-season game in the save: two points for a win, one for an overtime loss. Teams level on points are split by fewer games played, then wins, regulation wins and goal difference. Wins come first because the game's own playoff seeding puts them there.</p>
     <p><b>Under the hood.</b> Shot share is a team's part of all shot attempts in its games, the best quick read of who controls play. Sh% and Sv% are goals per shot, for and against; PDO adds them up, and a team far above or below 100 is usually riding luck that fades. Faceoffs is the share won.</p>
     <p><b>The race.</b> Each team gets a strength, in goals per game against an average team. It starts from the lineup: the average overall of the 12 forwards, the six defencemen and the starting goalie, weighted by how much each has mattered to goal difference in this league. Results then pull it toward the team's actual goal difference, slowly: a full season of games moves it about halfway. Every game left is played out <span id="m-sims"></span> times, with a small edge for the home team and <span id="m-ot"></span>% of games going to overtime for the loser's point.</p>
-    <p><b>Playoffs and the pick.</b> Playoffs is how often a team finishes in the top three of its division or takes one of its conference's two wild cards. 1st pick is its chance at first overall once the lottery is run among the 16 teams that miss: the league's odds, with a winner able to move up at most ten spots.</p>
+    <p><b>Playoffs and the pick.</b> Playoffs is how often a team <span id="m-po">finishes in the top three of its division or takes one of its conference's two wild cards</span>. 1st pick is its chance at first overall once the lottery is run among the 16 teams that miss: the league's odds, with a winner able to move up at most ten spots.</p>
     <p><b>How good is it?</b> Checked against every game of 2026-27 and the start of this season, the lineup number called winners better than the standings did. It doesn't know about trades, injuries or call-ups that haven't happened, so read it as where things point today.</p>
   </section>
 """
@@ -247,7 +255,14 @@ SCRIPT = r"""
   $('season').textContent = D.season; $('n-played').textContent = D.played; $('n-left').textContent = D.left.toLocaleString('en-CA');
   $('n-sims').textContent = $('m-sims').textContent = D.sims.toLocaleString('en-CA'); $('m-ot').textContent = D.ot;
   let picked = hashTeam() || 'CGY';
-  const rank = (a, b) => b.pts - a.pts || a.gp - b.gp || b.rw - a.rw || b.w - a.w || b.diff - a.diff || a.code.localeCompare(b.code);
+  const rank = (a, b) => b.pts - a.pts || a.gp - b.gp || b.w - a.w || b.rw - a.rw || b.diff - a.diff || a.code.localeCompare(b.code);
+  // Top N per conference on points (the league's format since 2027-28) instead of divisions and wild cards.
+  const topN = D.byConf ? ({4: 'four', 6: 'six', 8: 'eight'}[D.byConf] || D.byConf) : '';
+  if (D.byConf) {
+    $('v-wild').textContent = 'Conference';
+    $('cut-note').textContent = `The line is the playoff cut: the top ${topN} in each conference on points.`;
+    $('m-po').textContent = `finishes in the top ${topN} of its conference`;
+  }
 
   // The table
   let view = 'wild';
@@ -265,6 +280,8 @@ SCRIPT = r"""
     if (view === 'league') { $('tables').innerHTML = block('League', T.slice().sort(rank), 0, true); return; }
     $('tables').innerHTML = '<div class="blocks">' + D.confs.map((cn, c) => {
       const inConf = T.filter((t) => t.conf === c), divs = [...new Set(inConf.map((t) => t.div))].sort(), out = [], rest = [];
+      if (D.byConf && view === 'wild') return '<div>' + block(cn, inConf.sort(rank), D.byConf) + '</div>';
+      if (D.byConf) return '<div>' + divs.map((d) => block(D.divs[d], inConf.filter((t) => t.div === d).sort(rank), 0)).join('') + '</div>';
       divs.forEach((d) => { const s = inConf.filter((t) => t.div === d).sort(rank);
         if (view === 'div') out.push(block(D.divs[d], s, 3)); else { out.push(block(D.divs[d], s.slice(0, 3))); rest.push(...s.slice(3)); } });
       if (view !== 'div') out.push(block(cn + ' wild card', rest.sort(rank), 2));
