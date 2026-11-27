@@ -2,9 +2,10 @@
 
 Each player carries one _CareerStats line per season type, league and club: comma-separated numbers with no
 names. The columns were named by matching the 2026-27 lines against their named copies in pastathlete.hlm, and
-the NHL lines add up to every team's own totals. An earlier season is read from the last save of that season,
-which still has the players who retired after it. A player who leaves the save during this season keeps his
-NHL line, read from the last save that held him.
+the NHL lines add up to every team's own totals. An earlier season is read from the last save of that season.
+A player who leaves the save during a season keeps his NHL lines: a retiree from the newest save's
+retired/<year>/retired.dat (the game moves retirees there in June, before the season's last save, with their
+lines whole, playoffs included), anyone else from the last save of the season that held him.
 """
 import collections
 import datetime
@@ -70,25 +71,56 @@ def gather(players, lines_of, year):
     return out
 
 
-def departed(ctx, year):
-    """{player id: player} for those with games this season who are gone from the newest save, each from the last save that held him.
+def retired(path, year):
+    """{player id: player} for those who retired after season `year`, from a save's retired/<year>/retired.dat: the game
+    moves them out of the PlayerList in June, before the season's last save, and keeps them whole there."""
+    try:
+        rows = sp.read_member(path, f"retired/{year}/retired.dat")
+    except (KeyError, ValueError):  # no such file: nobody has retired after that season yet
+        return {}
+    return {str(r["Athlete"]["Id"]): r["Athlete"] for r in rows or [] if (r.get("Athlete") or {}).get("Id") is not None}
 
-    A player who retires or is dropped mid-season disappears from the PlayerList, and his goals with him, so his
-    team's players stop adding up to the team. Needs the older saves: run alone, site_pages.py finds nobody.
+
+def departed(ctx, year, final_path, final_players):
+    """{player id: player} for those with games in season `year` who are gone from that season's last save
+    (final_path, whose PlayerList is final_players).
+
+    A player who retires or is dropped disappears from the PlayerList, and his goals with him, so his team's players
+    stop adding up to the team. A retiree comes from the newest save's retired file, which holds his whole season,
+    playoffs included; anyone else from the last earlier save of the season that held him (only those an NHL team
+    held at some point: these lines feed the NHL tables). That second kind needs the older saves: run alone,
+    site_pages.py finds only the retirees.
     """
-    last = {}  # player id -> the last earlier save of this season that holds him (the states are in date order)
-    for s in ctx.states or []:
-        if s.get("year") == year and s["path"] != ctx.path:
-            for pid in s["players"]:
-                if pid not in ctx.PL:
-                    last[pid] = s["path"]
-    out = {}
+    def played(p):
+        return any(season == year and typ in (0, 1) for _, typ, _, _, season, _ in csv_lines(p))
+    out = {pid: p for pid, p in retired(ctx.path, year).items() if pid not in final_players and played(p)}
+    nhl, last, seen = set(ctx.code), {}, set()  # last: player id -> the last earlier save of the season that holds him
+    for s in ctx.states or []:  # date order: the last one wins
+        if s.get("year") == year and s["path"] != final_path:
+            for pid, q in s["players"].items():
+                if pid in final_players or pid in out:
+                    continue
+                last[pid] = s["path"]
+                if (q.get("TeamIds") or {}).get("0") in nhl or q.get("TeamId") in nhl:
+                    seen.add(pid)
+    last = {pid: path for pid, path in last.items() if pid in seen}
     for path in sorted(set(last.values())):
         players = sp.read_full(path)["PlayerList"]
         for pid, src in last.items():
-            if src == path and pid in players and any(season == year and typ in (0, 1) for _, typ, _, _, season, _ in csv_lines(players[pid])):
+            if src == path and pid in players and played(players[pid]):
                 out[pid] = players[pid]
     return out
+
+
+def playoff_goals(lg, since):
+    """{team id: goals} in the playoff games of the save's bracket played after `since` (the regular season's last day)."""
+    goals = collections.Counter()
+    for serie in (lg.get("Playoffs") or {}).get("PlayoffList") or []:
+        for g in serie.get("SaveGames") or []:
+            if (g.get("DateTime") or "")[:10] > since:
+                goals[g["HomeID"]] += g.get("ScoreHome") or 0
+                goals[g["AwayID"]] += g.get("ScoreAway") or 0
+    return goals
 
 
 def save_rate(entries):
@@ -140,7 +172,7 @@ def build(ctx):
     # This season: the NHL, its playoffs once they start, and NHL clubs' players in every other league.
     # Players who left the save since the season began keep their NHL lines, with no rating or cap hit.
     now = gather(ctx.PL, lambda pid, p: csv_lines(p), year)
-    gone = departed(ctx, year)
+    gone = departed(ctx, year, ctx.path, ctx.PL)
     left = gather(gone, lambda pid, p: csv_lines(p), year)
 
     def nhl(typ):
@@ -164,40 +196,53 @@ def build(ctx):
 
     # Earlier seasons: the last save of each one when the build has the older saves, else the newest save's history file.
     finals = {s["year"]: s["path"] for s in ctx.states or [] if s.get("year") and s["year"] < year}  # date order: the last one wins
-    past, thin = None, []
+    past, thin, kept_past = None, [], 0
     for y in range(year - 1, FIRST_SEASON - 1, -1):
         if y in finals:
             players = sp.read_full(finals[y])["PlayerList"]
             table = gather(players, lambda pid, p: csv_lines(p), y)
+            gone_y = departed(ctx, y, finals[y], players)
         else:
             if past is None:
                 past = sp.read_member(ctx.path, "pastathlete.hlm")["Stats"]
             players = ctx.PL
             table = gather(players, lambda pid, p: named_lines(past.get(pid)), y)
+            gone_y = departed(ctx, y, ctx.path, ctx.PL)
             thin.append(label(y))
+        left_y = gather(gone_y, lambda pid, p: csv_lines(p), y)  # players gone from that season's last save
+        kept_past += len(left_y.get((0, 0), {})) + len(left_y.get((1, 0), {}))
         on = datetime.date(y + 1, 2, 1)
-        add(str(y), f"{label(y)} · NHL", *rows(players, table.get((0, 0), {}), y, on, False), {"": save_rate(table.get((0, 0), {}))})
-        add(f"{y}p", f"{label(y)} · NHL playoffs", *rows(players, table.get((1, 0), {}), y, on, False), {"": save_rate(table.get((1, 0), {}))}, po=True)
+        for typ, sid, text in ((0, str(y), f"{label(y)} · NHL"), (1, f"{y}p", f"{label(y)} · NHL playoffs")):
+            here, away = table.get((typ, 0), {}), left_y.get((typ, 0), {})
+            sk, go = rows(players, here, y, on, False)
+            sk2, go2 = rows(gone_y, away, y, on, False)
+            add(sid, text, sk + sk2, go + go2, {"": save_rate({**here, **away})}, **({"po": True} if typ else {}))
 
-    # Check: this season's NHL goals, club by club, against each team's own line.
-    goals = collections.Counter()
+    # Check: this season's NHL goals, club by club, against each team's own line, and in the playoffs against the bracket's scores.
+    goals = {0: collections.Counter(), 1: collections.Counter()}
     for p in list(ctx.PL.values()) + list(gone.values()):
         for goalie, typ, league, club, season, nums in csv_lines(p):
-            if not goalie and typ == 0 and league == 0 and season == year:
-                goals[club] += nums[GOALS]
-    off = [c for t, c in code.items() if goals[t] != ((ctx.lg["TeamList"][str(t)].get("Stats") or {}).get("GoalsFor") or 0)]
-    if off:
-        print(f"CHECK: players' goals don't add up to the team's for {', '.join(sorted(off))}", flush=True)
+            if not goalie and typ in goals and league == 0 and season == year:
+                goals[typ][club] += nums[GOALS]
+    team_po = playoff_goals(ctx.lg, (ctx.lg.get("SeasonEnd") or "")[:10])
+    off = [c for t, c in code.items() if goals[0][t] != ((ctx.lg["TeamList"][str(t)].get("Stats") or {}).get("GoalsFor") or 0)]
+    off_po = [c for t, c in code.items() if goals[1][t] != team_po.get(t, 0)]
+    msg = ([f"for {', '.join(sorted(off))}"] if off else []) + ([f"in the playoffs for {', '.join(sorted(off_po))}"] if off_po else [])
+    if msg:
+        print(f"CHECK: players' goals don't add up to the team's {', and '.join(msg)}", flush=True)
+    n_po = len([t for t in code if team_po.get(t)])
 
     cfg = ctx.lg.get("ConfigOrDefault") or {}
     data = dict(ctx.base(), sets=sets, games=cfg.get("GamesPerSeason") or 82, teams=[{"code": c} for c in sorted(code.values())])
     first = sets[0] if sets else {"sk": [], "go": []}
-    note = f" ({', '.join(thin)} from the history file: run from build_report_cards.py to add players since retired)" if thin else ""
+    note = f" ({', '.join(thin)} from the history file: run from build_report_cards.py to add players dropped during it)" if thin else ""
     return site_shell.page("stats", "PHL player stats", "Every skater's and goalie's numbers in the HLM27 league: scoring, rates, on-ice results and cost per point.",
                            BODY, data, SCRIPT, CSS), \
         (f"{len(first['sk'])} skaters and {len(first['go'])} goalies in {first.get('label', 'no season')}, {others} players in other leagues, "
          f"{len(sets)} tables; goals match the standings for {len(code) - len(off)} of {len(code)} teams"
-         f"{f'; {kept} NHL line(s) kept for players who left the save this season' if kept else ''}{note}")
+         f"{f', and the playoffs for {n_po - len(off_po)} of {n_po}' if n_po else ''}"
+         f"{f'; {kept} NHL line(s) kept for players who left the save this season' if kept else ''}"
+         f"{f', {kept_past} for earlier seasons' if kept_past else ''}{note}")
 
 
 CSS = """

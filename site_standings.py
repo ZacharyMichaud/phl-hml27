@@ -161,9 +161,26 @@ def build(ctx):
                  left=len(left[i]), homeLeft=home_left[i],
                  sosLeft=round(statistics.mean(mean[j] for j in left[i]), 2) if left[i] else 0,
                  sosPlayed=round(statistics.mean(mean[j] for j in faced[i]), 2) if faced[i] else 0)
+    # Once the lottery is drawn (LotteryDone, from June to the season rollover), 1st pick shows its winner, not the odds:
+    # the team whose own 1st of the coming draft has Total 1, or after the draft the original team in the first pick's PickId (YYYYRRTT).
+    won = None
+    if lg.get("LotteryDone"):
+        draft = (ctx.sl.get("Year") or ctx.season0) + 1
+        top = next((p for p in lg["PickList"] if p.get("Year") == draft and p.get("Round") == 1 and p.get("Total") == 1), None)
+        if top:
+            won = ctx.code.get(top.get("Original"))
+        else:
+            for p in PL.values():
+                d = next((d for d in p.get("Drafted") or [] if "League" not in d and d.get("Year") == draft and d.get("Round") == 1 and d.get("Pick") == 1), None)
+                if d and str(d.get("PickId", "")).startswith(str(draft)):
+                    won = ctx.code.get(int(str(d["PickId"])[-2:]))
+                    break
+        if won:
+            for r in rows:
+                r["first"] = 100.0 if r["code"] == won else 0.0
     data = dict(ctx.base(), teams=rows, confs=[c.get("Name", "") for c in lg["Conferences"]], divs=[d.get("Name", "") for d in lg["Divisions"]],
                 played=len(played), left=len(todo), sims=sims, season=ctx.season_label(), ot=round(100 * OT_SHARE, 1),
-                lottery=[round(100 * x, 1) for x in lot], byConf=per_conf if by_conf else 0)
+                lottery=[round(100 * x, 1) for x in lot], byConf=per_conf if by_conf else 0, lotteryWon=won)
     return site_shell.page("standings", "PHL standings", "Standings, shot share, luck and the playoff race in the HLM27 league.", BODY, data, SCRIPT, CSS), \
         f"{len(played)} games played, {len(todo)} to play, {sims:,} simulated seasons"
 
@@ -192,7 +209,7 @@ BODY = """
   </section>
 
   <section id="race">
-    <div class="head"><h2>The race</h2><span class="note">The rest of the season played out <span id="n-sims"></span> times. Click a header to sort.</span></div>
+    <div class="head"><h2>The race</h2><span class="note" id="race-note">The rest of the season played out <span id="n-sims"></span> times. Click a header to sort.</span></div>
     <div class="scroll tall">
       <table id="race-table">
         <thead><tr>
@@ -240,7 +257,7 @@ BODY = """
     <p><b>The table.</b> Built from every regular-season game in the save: two points for a win, one for an overtime loss. Teams level on points are split by fewer games played, then wins, regulation wins and goal difference. Wins come first because the game's own playoff seeding puts them there.</p>
     <p><b>Under the hood.</b> Shot share is a team's part of all shot attempts in its games, the best quick read of who controls play. Sh% and Sv% are goals per shot, for and against; PDO adds them up, and a team far above or below 100 is usually riding luck that fades. Faceoffs is the share won.</p>
     <p><b>The race.</b> Each team gets a strength, in goals per game against an average team. It starts from the lineup: the average overall of the 12 forwards, the six defencemen and the starting goalie, weighted by how much each has mattered to goal difference in this league. Results then pull it toward the team's actual goal difference, slowly: a full season of games moves it about halfway. Every game left is played out <span id="m-sims"></span> times, with a small edge for the home team and <span id="m-ot"></span>% of games going to overtime for the loser's point.</p>
-    <p><b>Playoffs and the pick.</b> Playoffs is how often a team <span id="m-po">finishes in the top three of its division or takes one of its conference's two wild cards</span>. 1st pick is its chance at first overall once the lottery is run among the 16 teams that miss: the league's odds, with a winner able to move up at most ten spots.</p>
+    <p><b>Playoffs and the pick.</b> Playoffs is how often a team <span id="m-po">finishes in the top three of its division or takes one of its conference's two wild cards</span>. <span id="m-first">1st pick is its chance at first overall once the lottery is run among the 16 teams that miss: the league's odds, with a winner able to move up at most ten spots.</span></p>
     <p><b>How good is it?</b> Checked against every game of 2026-27 and the start of this season, the lineup number called winners better than the standings did. It doesn't know about trades, injuries or call-ups that haven't happened, so read it as where things point today.</p>
   </section>
 """
@@ -254,6 +271,9 @@ SCRIPT = r"""
   T.forEach((t) => { t.pdo = t.shp + t.svp; });
   $('season').textContent = D.season; $('n-played').textContent = D.played; $('n-left').textContent = D.left.toLocaleString('en-CA');
   $('n-sims').textContent = $('m-sims').textContent = D.sims.toLocaleString('en-CA'); $('m-ot').textContent = D.ot;
+  const won = D.lotteryWon;
+  if (!D.left) $('race-note').textContent = 'The regular season is over. Click a header to sort.';
+  if (won) $('m-first').textContent = `The lottery is done: ${D.names[won] || won} won first overall, and 1st pick shows it. Until the draw, 1st pick is each team's chance at first overall among the 16 teams that miss: the league's odds, with a winner able to move up at most ten spots.`;
   let picked = hashTeam() || 'CGY';
   const rank = (a, b) => b.pts - a.pts || a.gp - b.gp || b.w - a.w || b.rw - a.rw || b.diff - a.diff || a.code.localeCompare(b.code);
   // Top N per conference on points (the league's format since 2027-28) instead of divisions and wild cards.
@@ -299,7 +319,7 @@ SCRIPT = r"""
       <td><b>${t.code}</b> <span class="soft wide">${esc(t.name)}</span></td><td class="num">${t.pts}</td>
       <td class="num"><b>${Math.round(t.proj)}</b> <span class="soft wide">${t.lo}–${t.hi}</span></td>
       <td class="num"><b>${p1(t.po)}</b></td><td class="bar sec"><span class="meter"><i class="blue" style="width:${t.po}%"></i></span></td>
-      <td class="num sec">${p1(t.dv)}</td><td class="num">${t.first ? p1(t.first) : '<span class="soft">–</span>'}</td>
+      <td class="num sec">${p1(t.dv)}</td><td class="num">${won ? (t.code === won ? '<b>Won</b>' : '<span class="soft">–</span>') : t.first ? p1(t.first) : '<span class="soft">–</span>'}</td>
       <td class="num sec ${cls(t.str)}">${signed(t.str, 2)}</td><td class="num sec">${signed(t.sosLeft, 2)}</td><td class="num sec">${t.homeLeft}<span class="soft">/${t.left}</span></td></tr>`).join('');
   }
   sortable($('race-table'), rs, drawRace);

@@ -6,7 +6,8 @@ Usage:
 
 build_report_cards.py runs this at the end of its own build and hands over the saves it has already
 read; run on its own, only the newest save is read, so the progression page has no summer rollover and
-the player stats of earlier seasons lack the players who have since retired.
+the player stats lack the players the game dropped during a season or who left after its last save
+(retirees still come from the newest save's retired files).
 """
 import argparse
 import datetime
